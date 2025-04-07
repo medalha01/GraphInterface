@@ -344,7 +344,6 @@ class GraphicsEditor(QMainWindow):
             self._update_line_preview(scene_pos)
         elif self._drawing_mode == DrawingMode.POLYGON and self._current_polygon_points:
             self._update_polygon_preview(scene_pos)
-        # Atualizar coordenadas na status bar (se implementado)
         # self._update_mouse_coords_status(scene_pos)
 
     # def _update_mouse_coords_status(self, scene_pos: QPointF):
