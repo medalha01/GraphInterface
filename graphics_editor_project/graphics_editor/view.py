@@ -1,12 +1,19 @@
 # graphics_editor/view.py
-from PyQt5.QtWidgets import (QGraphicsView, QFrame, QGraphicsScene, QRubberBand,
-                             QWidget)
-from PyQt5.QtGui import (QPainter, QBrush, QTransform, QMouseEvent, QKeyEvent,
-                         QWheelEvent, QCursor) # Adicionado QCursor
+from PyQt5.QtWidgets import QGraphicsView, QFrame, QGraphicsScene, QRubberBand, QWidget
+from PyQt5.QtGui import (
+    QPainter,
+    QBrush,
+    QTransform,
+    QMouseEvent,
+    QKeyEvent,
+    QWheelEvent,
+    QCursor,
+)
 from PyQt5.QtCore import Qt, pyqtSignal, QPointF, QPoint
 
 from typing import Optional
-import math # Importado para cálculos de ângulo e escala
+import math
+
 
 class GraphicsView(QGraphicsView):
     """
@@ -18,27 +25,30 @@ class GraphicsView(QGraphicsView):
     scene_left_clicked = pyqtSignal(QPointF)
     scene_right_clicked = pyqtSignal(QPointF)
     scene_mouse_moved = pyqtSignal(QPointF)
-    delete_requested = pyqtSignal() # Sinal para solicitar exclusão (tecla Del/Backspace)
-    rotation_changed = pyqtSignal(float) # Sinal para notificar mudança de rotação (EM GRAUS)
-    scale_changed = pyqtSignal() # Sinal para notificar mudança de escala/zoom
+    delete_requested = (
+        pyqtSignal()
+    )  # Sinal para solicitar exclusão (tecla Del/Backspace)
+    rotation_changed = pyqtSignal(
+        float
+    )  # Sinal para notificar mudança de rotação (EM GRAUS)
+    scale_changed = pyqtSignal()  # Sinal para notificar mudança de escala/zoom
 
     def __init__(self, scene: QGraphicsScene, parent: Optional[QWidget] = None):
         super().__init__(scene, parent)
 
         # --- Configuração de Navegação ---
-        self._min_zoom_factor: float = 0.01  # Zoom mínimo permitido
-        self._max_zoom_factor: float = 10.0 # Zoom máximo permitido
+        self._min_zoom_factor: float = 0.1  # Zoom mínimo permitido
+        self._max_zoom_factor: float = 10.0  # Zoom máximo permitido
         self._zoom_increment: float = 1.15  # Fator de zoom por passo da roda do mouse
-        self._pan_step: int = 30            # Pixels para mover com as setas
-        self._rotation_step: float = 5.0    # Graus para rotacionar por passo (Shift+Setas)
-
-        # --- Estado da View ---
-        # O ângulo de rotação é inerente à matriz de transformação da view.
-        # Não precisamos mais rastrear `_window_rotation_angle` separadamente.
-        # O método get_rotation_angle() calculará a partir da matriz.
+        self._pan_step: int = 30  # Pixels para mover com as setas
+        self._rotation_step: float = (
+            5.0  # Graus para rotacionar por passo (Shift+Setas)
+        )
 
         self._setup_view_defaults()
-        self.setFocusPolicy(Qt.StrongFocus) # Necessário para receber eventos de teclado
+        self.setFocusPolicy(
+            Qt.StrongFocus
+        )  # Necessário para receber eventos de teclado
 
     def _setup_view_defaults(self) -> None:
         """Aplica configurações visuais e de comportamento padrão à view."""
@@ -46,20 +56,24 @@ class GraphicsView(QGraphicsView):
         self.setRenderHint(QPainter.TextAntialiasing)
         # O DragMode é controlado pelo Editor (Select/Pan/Draw), aqui definimos apenas o default inicial
         self.setDragMode(QGraphicsView.RubberBandDrag)
-        self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate) # Mais simples, pode ser otimizado depois
+        self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)  #
 
         # Âncora de transformação: crucial para rotação e zoom
         # AnchorViewCenter faz rotate() e scale() ocorrerem em torno do centro visível da view.
         self.setTransformationAnchor(QGraphicsView.AnchorViewCenter)
-        self.setResizeAnchor(QGraphicsView.AnchorViewCenter) # Mantém o centro ao redimensionar
+        self.setResizeAnchor(
+            QGraphicsView.AnchorViewCenter
+        )  # Mantém o centro ao redimensionar
 
         # Desliga as barras de rolagem padrão
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
-        self.setBackgroundBrush(QBrush(Qt.lightGray)) # Cor de fundo
-        self.setFrameShape(QFrame.NoFrame) # Sem borda
-        self.setMouseTracking(True) # Recebe eventos de movimento mesmo sem botão pressionado
+        self.setBackgroundBrush(QBrush(Qt.lightGray))  # Cor de fundo
+        self.setFrameShape(QFrame.NoFrame)  # Sem borda
+        self.setMouseTracking(
+            True
+        )  # Recebe eventos de movimento mesmo sem botão pressionado
 
     def set_drag_mode(self, mode: QGraphicsView.DragMode) -> None:
         """Define o modo de arrasto da view (controlado pelo Editor)."""
@@ -72,10 +86,9 @@ class GraphicsView(QGraphicsView):
             self.setCursor(Qt.OpenHandCursor)
         # Define o cursor padrão para outros modos (será sobrescrito pelo Editor se necessário)
         elif mode == QGraphicsView.RubberBandDrag:
-             self.setCursor(Qt.ArrowCursor)
-        else: # NoDrag (modos de desenho)
-             self.setCursor(Qt.CrossCursor) # O editor já faz isso, mas por segurança
-
+            self.setCursor(Qt.ArrowCursor)
+        else:  # NoDrag (modos de desenho)
+            self.setCursor(Qt.CrossCursor)  # O editor já faz isso, mas por segurança
 
     def _zoom(self, factor: float) -> None:
         """Aplica zoom na view centrado no AnchorViewCenter e emite sinal."""
@@ -83,15 +96,19 @@ class GraphicsView(QGraphicsView):
 
         # Limita o zoom aos fatores mínimo e máximo
         target_scale = current_scale * factor
-        clamped_scale = max(self._min_zoom_factor, min(target_scale, self._max_zoom_factor))
+        clamped_scale = max(
+            self._min_zoom_factor, min(target_scale, self._max_zoom_factor)
+        )
 
         # Calcula o fator de escala real a ser aplicado, evitando divisão por zero
-        actual_factor = clamped_scale / current_scale if abs(current_scale) > 1e-9 else 1.0
+        actual_factor = (
+            clamped_scale / current_scale if abs(current_scale) > 1e-9 else 1.0
+        )
 
         # Aplica a escala se houver mudança significativa
         if abs(actual_factor - 1.0) > 1e-6:
             self.scale(actual_factor, actual_factor)
-            self.scale_changed.emit() # EMITE O SINAL AQUI!
+            self.scale_changed.emit()  # EMITE O SINAL AQUI!
 
     def _rotate_view(self, angle_delta: float) -> None:
         """Rotaciona a view em torno do AnchorViewCenter."""
@@ -101,17 +118,16 @@ class GraphicsView(QGraphicsView):
         # Emite o sinal com o NOVO ângulo de rotação atual
         self.rotation_changed.emit(self.get_rotation_angle())
 
-
     # --- Event Handlers ---
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         """Trata eventos da roda do mouse para aplicar zoom."""
-        angle = event.angleDelta().y() # Delta vertical da roda
+        angle = event.angleDelta().y()  # Delta vertical da roda
         if angle > 0:
-            self._zoom(self._zoom_increment) # Zoom in
+            self._zoom(self._zoom_increment)  # Zoom in
         elif angle < 0:
-            self._zoom(1.0 / self._zoom_increment) # Zoom out
-        event.accept() # Indica que o evento foi tratado
+            self._zoom(1.0 / self._zoom_increment)  # Zoom out
+        event.accept()  # Indica que o evento foi tratado
 
     def keyPressEvent(self, event: QKeyEvent) -> None:
         """Trata pressionamentos de tecla para navegação e ações."""
@@ -121,69 +137,92 @@ class GraphicsView(QGraphicsView):
         # Rotação da View: Shift + Setas Esquerda/Direita
         if modifiers == Qt.ShiftModifier:
             if key == Qt.Key_Left:
-                self._rotate_view(self._rotation_step) # Rotaciona anti-horário (ângulo positivo)
+                self._rotate_view(
+                    self._rotation_step
+                )  # Rotaciona anti-horário (ângulo positivo)
                 event.accept()
                 return
             elif key == Qt.Key_Right:
-                self._rotate_view(-self._rotation_step) # Rotaciona horário (ângulo negativo)
+                self._rotate_view(
+                    -self._rotation_step
+                )  # Rotaciona horário (ângulo negativo)
                 event.accept()
                 return
             # Adicionar Shift + Up/Down para zoom poderia ser uma opção
-            # elif key == Qt.Key_Up:
-            #     self._zoom(self._zoom_increment); event.accept(); return
-            # elif key == Qt.Key_Down:
-            #     self._zoom(1.0 / self._zoom_increment); event.accept(); return
-
+            elif key == Qt.Key_Up:
+                self._zoom(self._zoom_increment)
+                event.accept()
+                return
+            elif key == Qt.Key_Down:
+                self._zoom(1.0 / self._zoom_increment)
+                event.accept()
+                return
 
         # Navegação Padrão (Sem Shift)
         elif modifiers == Qt.NoModifier:
             # Pan com Setas: translate() move a "câmera"
             if key == Qt.Key_Left:
-                self.translate(self._pan_step, 0); event.accept(); return
+                self.translate(self._pan_step, 0)
+                event.accept()
+                return
             elif key == Qt.Key_Right:
-                self.translate(-self._pan_step, 0); event.accept(); return
+                self.translate(-self._pan_step, 0)
+                event.accept()
+                return
             elif key == Qt.Key_Up:
-                self.translate(0, self._pan_step); event.accept(); return
+                self.translate(0, self._pan_step)
+                event.accept()
+                return
             elif key == Qt.Key_Down:
-                self.translate(0, -self._pan_step); event.accept(); return
+                self.translate(0, -self._pan_step)
+                event.accept()
+                return
 
             # Zoom com Teclas +/-
             elif key == Qt.Key_Plus or key == Qt.Key_Equal:
-                self._zoom(self._zoom_increment); event.accept(); return
+                self._zoom(self._zoom_increment)
+                event.accept()
+                return
             elif key == Qt.Key_Minus:
-                self._zoom(1.0 / self._zoom_increment); event.accept(); return
+                self._zoom(1.0 / self._zoom_increment)
+                event.accept()
+                return
 
             # Deleção de Itens
             elif key == Qt.Key_Delete or key == Qt.Key_Backspace:
                 # Só emite se não estiver no modo Pan (evita deletar ao tentar navegar)
                 if self.dragMode() != QGraphicsView.ScrollHandDrag:
-                    self.delete_requested.emit(); event.accept(); return
+                    self.delete_requested.emit()
+                    event.accept()
+                    return
 
         # Se nenhuma combinação foi tratada, passa para a classe base
         super().keyPressEvent(event)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         """Trata cliques do mouse, emitindo sinais ou iniciando pan."""
-        scene_pos = self.mapToScene(event.pos()) # Converte para coordenadas da cena
+        scene_pos = self.mapToScene(event.pos())  # Converte para coordenadas da cena
 
         if event.button() == Qt.LeftButton:
             # Se estiver no modo Pan (ScrollHandDrag), muda o cursor.
             # Deixa a classe base QGraphicsView iniciar o pan interno.
             if self.dragMode() == QGraphicsView.ScrollHandDrag:
                 self.setCursor(Qt.ClosedHandCursor)
-                super().mousePressEvent(event) # DEIXA a classe base lidar com o início do pan
+                super().mousePressEvent(
+                    event
+                )  # DEIXA a classe base lidar com o início do pan
             # Se estiver em modo de desenho (NoDrag), emite sinal para o editor
             elif self.dragMode() == QGraphicsView.NoDrag:
-                 self.scene_left_clicked.emit(scene_pos)
-                 event.accept() # Aceita porque NÓS tratamos isso
+                self.scene_left_clicked.emit(scene_pos)
+                event.accept()  # Aceita porque NÓS tratamos isso
             # Se estiver no modo Select (RubberBandDrag), deixa a view base tratar
             else:
-                super().mousePressEvent(event) # Deixa a base lidar com seleção
+                super().mousePressEvent(event)  # Deixa a base lidar com seleção
 
         elif event.button() == Qt.RightButton:
             # Emite sinal para o editor (ex: finalizar polígono)
             self.scene_right_clicked.emit(scene_pos)
-            event.accept() # Aceita porque NÓS tratamos isso
+            event.accept()  # Aceita porque NÓS tratamos isso
 
         # Passa outros botões (ex: botão do meio) para a classe base
         else:
@@ -191,15 +230,15 @@ class GraphicsView(QGraphicsView):
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         """Trata movimento do mouse para pan ou emissão de posição."""
-        scene_pos = self.mapToScene(event.pos()) # Coordenadas da cena
+        scene_pos = self.mapToScene(event.pos())  # Coordenadas da cena
 
         # Se estiver no modo ScrollHandDrag, deixa a classe base fazer o pan.
         if self.dragMode() == QGraphicsView.ScrollHandDrag:
-             super().mouseMoveEvent(event) # DEIXA a classe base fazer o pan
+            super().mouseMoveEvent(event)  # DEIXA a classe base fazer o pan
         # Se estiver em modo de desenho, emite a posição do mouse
         elif self.dragMode() == QGraphicsView.NoDrag:
             self.scene_mouse_moved.emit(scene_pos)
-            event.accept() # Aceita porque NÓS tratamos isso
+            event.accept()  # Aceita porque NÓS tratamos isso
         # Outros modos (Select) são tratados pela classe base
         else:
             super().mouseMoveEvent(event)
@@ -207,9 +246,12 @@ class GraphicsView(QGraphicsView):
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         """Trata liberação do mouse, finalizando o pan."""
         # Restaura o cursor se o botão esquerdo foi solto no modo Pan.
-        if event.button() == Qt.LeftButton and self.dragMode() == QGraphicsView.ScrollHandDrag:
-            self.setCursor(Qt.OpenHandCursor) # Restaura cursor de pan
-            super().mouseReleaseEvent(event) # DEIXA a classe base finalizar o pan
+        if (
+            event.button() == Qt.LeftButton
+            and self.dragMode() == QGraphicsView.ScrollHandDrag
+        ):
+            self.setCursor(Qt.OpenHandCursor)  # Restaura cursor de pan
+            super().mouseReleaseEvent(event)  # DEIXA a classe base finalizar o pan
         else:
             # Passa outros eventos de release para a classe base
             super().mouseReleaseEvent(event)
@@ -231,7 +273,7 @@ class GraphicsView(QGraphicsView):
         current_angle = self.get_rotation_angle()
         # Calcula a diferença e rotaciona por essa diferença
         delta = angle - current_angle
-        self._rotate_view(delta) # _rotate_view já emite o sinal
+        self._rotate_view(delta)  # _rotate_view já emite o sinal
 
     def get_scale(self) -> float:
         """
@@ -256,32 +298,39 @@ class GraphicsView(QGraphicsView):
             # mas a abordagem mais simples é limitar a escala mínima em _zoom.
             # Se current_scale é 0 e target_scale não é, precisamos de uma abordagem diferente.
             # Por enquanto, vamos confiar que _zoom lida com isso ao não permitir escala zero.
-            factor = 1.0 # Fator neutro se a escala atual for ~0
+            factor = 1.0  # Fator neutro se a escala atual for ~0
         else:
             factor = target_scale / current_scale
 
         # Clamp target_scale first to avoid issues near zero
-        clamped_target_scale = max(self._min_zoom_factor, min(target_scale, self._max_zoom_factor))
+        clamped_target_scale = max(
+            self._min_zoom_factor, min(target_scale, self._max_zoom_factor)
+        )
         if abs(current_scale) > 1e-9:
-             factor = clamped_target_scale / current_scale
+            factor = clamped_target_scale / current_scale
         else:
-             # If current scale is near zero, directly set the transform? Or just use a large factor?
-             # Using _zoom is safer as it handles clamping internally based on current state.
-             # We recalculate the factor based on the clamped target.
-             factor = clamped_target_scale / self._min_zoom_factor if factor > 1 else clamped_target_scale / self._max_zoom_factor
-             # This logic is getting complex. Let's simplify: _zoom applies a *relative* factor.
+            # If current scale is near zero, directly set the transform? Or just use a large factor?
+            # Using _zoom is safer as it handles clamping internally based on current state.
+            # We recalculate the factor based on the clamped target.
+            factor = (
+                clamped_target_scale / self._min_zoom_factor
+                if factor > 1
+                else clamped_target_scale / self._max_zoom_factor
+            )
+            # This logic is getting complex. Let's simplify: _zoom applies a *relative* factor.
 
         # Calculate the actual factor needed to reach the clamped target scale
         if abs(current_scale) > 1e-9:
             actual_factor_needed = clamped_target_scale / current_scale
             self._zoom(actual_factor_needed)
-        elif clamped_target_scale > 0: # If current scale is zero, but target is not
-             # We cannot reach a target scale by multiplying zero. Reset and scale?
-             # Simplest: Directly set the scale part of the transform? Risky.
-             # Alternative: Call _zoom with a large/small factor to move away from zero?
-             # Let's use _zoom with the target relative to 1.0 as a guess.
-             self._zoom(clamped_target_scale) # This might not be accurate but avoids complexity
-
+        elif clamped_target_scale > 0:  # If current scale is zero, but target is not
+            # We cannot reach a target scale by multiplying zero. Reset and scale?
+            # Simplest: Directly set the scale part of the transform? Risky.
+            # Alternative: Call _zoom with a large/small factor to move away from zero?
+            # Let's use _zoom with the target relative to 1.0 as a guess.
+            self._zoom(
+                clamped_target_scale
+            )  # This might not be accurate but avoids complexity
 
     def reset_view(self) -> None:
         """Reseta zoom, rotação e posição da view para o estado inicial."""
@@ -299,4 +348,4 @@ class GraphicsView(QGraphicsView):
             self.rotation_changed.emit(0.0)
         # 4. Emite sinal de escala APENAS se ela mudou ao resetar
         if not initial_scale_was_one:
-             self.scale_changed.emit()
+            self.scale_changed.emit()
