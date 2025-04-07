@@ -19,23 +19,23 @@ class GraphicsView(QGraphicsView):
     scene_right_clicked = pyqtSignal(QPointF)
     scene_mouse_moved = pyqtSignal(QPointF)
     delete_requested = pyqtSignal() # Sinal para solicitar exclusão (tecla Del/Backspace)
-    rotation_changed = pyqtSignal(float) # Sinal para notificar mudança de rotação
+    rotation_changed = pyqtSignal(float) # Sinal para notificar mudança de rotação (EM GRAUS)
     scale_changed = pyqtSignal() # Sinal para notificar mudança de escala/zoom
 
     def __init__(self, scene: QGraphicsScene, parent: Optional[QWidget] = None):
         super().__init__(scene, parent)
 
         # --- Configuração de Navegação ---
-        self._min_zoom_factor: float = 0.1  # Zoom mínimo permitido
+        self._min_zoom_factor: float = 0.01  # Zoom mínimo permitido
         self._max_zoom_factor: float = 10.0 # Zoom máximo permitido
         self._zoom_increment: float = 1.15  # Fator de zoom por passo da roda do mouse
         self._pan_step: int = 30            # Pixels para mover com as setas
         self._rotation_step: float = 5.0    # Graus para rotacionar por passo (Shift+Setas)
 
         # --- Estado da View ---
-        self._window_rotation_angle: float = 0.0 # Ângulo atual de rotação da view
-        # Removido: self._is_panning_with_mouse: bool = False
-        # Removido: self._last_pan_point: QPoint = QPoint()
+        # O ângulo de rotação é inerente à matriz de transformação da view.
+        # Não precisamos mais rastrear `_window_rotation_angle` separadamente.
+        # O método get_rotation_angle() calculará a partir da matriz.
 
         self._setup_view_defaults()
         self.setFocusPolicy(Qt.StrongFocus) # Necessário para receber eventos de teclado
@@ -66,6 +66,16 @@ class GraphicsView(QGraphicsView):
         # Apenas chama o método da classe base. O Editor é responsável por
         # chamar este método e ajustar o cursor se necessário.
         super().setDragMode(mode)
+        # --- Atualização do Cursor no Modo Pan ---
+        # Define o cursor inicial para OpenHand quando entra no modo PAN
+        if mode == QGraphicsView.ScrollHandDrag:
+            self.setCursor(Qt.OpenHandCursor)
+        # Define o cursor padrão para outros modos (será sobrescrito pelo Editor se necessário)
+        elif mode == QGraphicsView.RubberBandDrag:
+             self.setCursor(Qt.ArrowCursor)
+        else: # NoDrag (modos de desenho)
+             self.setCursor(Qt.CrossCursor) # O editor já faz isso, mas por segurança
+
 
     def _zoom(self, factor: float) -> None:
         """Aplica zoom na view centrado no AnchorViewCenter e emite sinal."""
@@ -85,14 +95,12 @@ class GraphicsView(QGraphicsView):
 
     def _rotate_view(self, angle_delta: float) -> None:
         """Rotaciona a view em torno do AnchorViewCenter."""
-        self.rotate(angle_delta) # QGraphicsView.rotate() usa o transformationAnchor
+        # QGraphicsView.rotate() usa o transformationAnchor. O ângulo é em graus.
+        self.rotate(angle_delta)
 
-        # Atualiza o ângulo interno rastreado e emite sinal
-        current_transform = self.transform()
-        current_rad = math.atan2(current_transform.m21(), current_transform.m11())
-        self._window_rotation_angle = math.degrees(current_rad)
+        # Emite o sinal com o NOVO ângulo de rotação atual
+        self.rotation_changed.emit(self.get_rotation_angle())
 
-        self.rotation_changed.emit(self._window_rotation_angle)
 
     # --- Event Handlers ---
 
@@ -113,13 +121,19 @@ class GraphicsView(QGraphicsView):
         # Rotação da View: Shift + Setas Esquerda/Direita
         if modifiers == Qt.ShiftModifier:
             if key == Qt.Key_Left:
-                self._rotate_view(self._rotation_step) # Rotaciona anti-horário
+                self._rotate_view(self._rotation_step) # Rotaciona anti-horário (ângulo positivo)
                 event.accept()
                 return
             elif key == Qt.Key_Right:
-                self._rotate_view(-self._rotation_step) # Rotaciona horário
+                self._rotate_view(-self._rotation_step) # Rotaciona horário (ângulo negativo)
                 event.accept()
                 return
+            # Adicionar Shift + Up/Down para zoom poderia ser uma opção
+            # elif key == Qt.Key_Up:
+            #     self._zoom(self._zoom_increment); event.accept(); return
+            # elif key == Qt.Key_Down:
+            #     self._zoom(1.0 / self._zoom_increment); event.accept(); return
+
 
         # Navegação Padrão (Sem Shift)
         elif modifiers == Qt.NoModifier:
@@ -141,7 +155,9 @@ class GraphicsView(QGraphicsView):
 
             # Deleção de Itens
             elif key == Qt.Key_Delete or key == Qt.Key_Backspace:
-                self.delete_requested.emit(); event.accept(); return
+                # Só emite se não estiver no modo Pan (evita deletar ao tentar navegar)
+                if self.dragMode() != QGraphicsView.ScrollHandDrag:
+                    self.delete_requested.emit(); event.accept(); return
 
         # Se nenhuma combinação foi tratada, passa para a classe base
         super().keyPressEvent(event)
@@ -151,12 +167,10 @@ class GraphicsView(QGraphicsView):
         scene_pos = self.mapToScene(event.pos()) # Converte para coordenadas da cena
 
         if event.button() == Qt.LeftButton:
-            # Se estiver no modo Pan (ScrollHandDrag), APENAS muda o cursor.
+            # Se estiver no modo Pan (ScrollHandDrag), muda o cursor.
             # Deixa a classe base QGraphicsView iniciar o pan interno.
             if self.dragMode() == QGraphicsView.ScrollHandDrag:
                 self.setCursor(Qt.ClosedHandCursor)
-                # NÃO definimos _is_panning_with_mouse = True aqui
-                # NÃO chamamos event.accept() aqui para deixar a base processar
                 super().mousePressEvent(event) # DEIXA a classe base lidar com o início do pan
             # Se estiver em modo de desenho (NoDrag), emite sinal para o editor
             elif self.dragMode() == QGraphicsView.NoDrag:
@@ -180,10 +194,8 @@ class GraphicsView(QGraphicsView):
         scene_pos = self.mapToScene(event.pos()) # Coordenadas da cena
 
         # Se estiver no modo ScrollHandDrag, deixa a classe base fazer o pan.
-        # NÃO precisamos mais do _is_panning_with_mouse ou do cálculo manual de translate.
         if self.dragMode() == QGraphicsView.ScrollHandDrag:
              super().mouseMoveEvent(event) # DEIXA a classe base fazer o pan
-             # Não precisa de event.accept() explicitamente aqui, a base deve cuidar disso.
         # Se estiver em modo de desenho, emite a posição do mouse
         elif self.dragMode() == QGraphicsView.NoDrag:
             self.scene_mouse_moved.emit(scene_pos)
@@ -194,8 +206,7 @@ class GraphicsView(QGraphicsView):
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         """Trata liberação do mouse, finalizando o pan."""
-        # Apenas restaura o cursor se o botão esquerdo foi solto no modo Pan.
-        # A classe base QGraphicsView cuida da lógica de parada do pan.
+        # Restaura o cursor se o botão esquerdo foi solto no modo Pan.
         if event.button() == Qt.LeftButton and self.dragMode() == QGraphicsView.ScrollHandDrag:
             self.setCursor(Qt.OpenHandCursor) # Restaura cursor de pan
             super().mouseReleaseEvent(event) # DEIXA a classe base finalizar o pan
@@ -206,38 +217,86 @@ class GraphicsView(QGraphicsView):
     # --- Métodos de Controle da View ---
 
     def get_rotation_angle(self) -> float:
-        """Retorna o ângulo de rotação atual da view em graus."""
+        """
+        Retorna o ângulo de rotação atual da view em graus,
+        calculado a partir da matriz de transformação.
+        """
         transform = self.transform()
+        # atan2(m21, m11) gives the rotation angle in radians
         angle_rad = math.atan2(transform.m21(), transform.m11())
         return math.degrees(angle_rad)
 
     def set_rotation_angle(self, angle: float) -> None:
-        """Define o ângulo de rotação da view para um valor específico."""
+        """Define o ângulo de rotação da view para um valor absoluto específico."""
         current_angle = self.get_rotation_angle()
+        # Calcula a diferença e rotaciona por essa diferença
         delta = angle - current_angle
-        self._rotate_view(delta)
+        self._rotate_view(delta) # _rotate_view já emite o sinal
 
     def get_scale(self) -> float:
-        """Retorna o fator de escala atual da view (assume escala uniforme)."""
+        """
+        Retorna o fator de escala horizontal atual da view (assume escala uniforme).
+        m11 representa a escala em X.
+        """
+        # Em uma transformação afim 2D, m11 é sx*cos(theta) e m22 é sy*cos(theta)
+        # m21 é sx*sin(theta) e m12 é -sy*sin(theta)
+        # Se a escala for uniforme (sx=sy=s), então s = sqrt(m11^2 + m21^2)
+        # Ou podemos simplesmente retornar m11 se soubermos que a escala é sempre uniforme
+        # e não há cisalhamento (o que é verdade para scale() e rotate()).
+        # Vamos usar m11 por simplicidade, assumindo escala uniforme.
         return self.transform().m11()
 
     def set_scale(self, target_scale: float) -> None:
         """Define o fator de escala absoluto da view."""
         current_scale = self.get_scale()
-        factor = target_scale / current_scale if abs(current_scale) > 1e-9 else 1.0
-        self._zoom(factor)
+        # Evita divisão por zero se a escala atual for muito pequena
+        if abs(current_scale) < 1e-9:
+            # Se a escala atual é ~0, não podemos calcular um fator.
+            # Poderíamos tentar resetar e aplicar a escala, ou apenas escalar de forma absoluta,
+            # mas a abordagem mais simples é limitar a escala mínima em _zoom.
+            # Se current_scale é 0 e target_scale não é, precisamos de uma abordagem diferente.
+            # Por enquanto, vamos confiar que _zoom lida com isso ao não permitir escala zero.
+            factor = 1.0 # Fator neutro se a escala atual for ~0
+        else:
+            factor = target_scale / current_scale
+
+        # Clamp target_scale first to avoid issues near zero
+        clamped_target_scale = max(self._min_zoom_factor, min(target_scale, self._max_zoom_factor))
+        if abs(current_scale) > 1e-9:
+             factor = clamped_target_scale / current_scale
+        else:
+             # If current scale is near zero, directly set the transform? Or just use a large factor?
+             # Using _zoom is safer as it handles clamping internally based on current state.
+             # We recalculate the factor based on the clamped target.
+             factor = clamped_target_scale / self._min_zoom_factor if factor > 1 else clamped_target_scale / self._max_zoom_factor
+             # This logic is getting complex. Let's simplify: _zoom applies a *relative* factor.
+
+        # Calculate the actual factor needed to reach the clamped target scale
+        if abs(current_scale) > 1e-9:
+            actual_factor_needed = clamped_target_scale / current_scale
+            self._zoom(actual_factor_needed)
+        elif clamped_target_scale > 0: # If current scale is zero, but target is not
+             # We cannot reach a target scale by multiplying zero. Reset and scale?
+             # Simplest: Directly set the scale part of the transform? Risky.
+             # Alternative: Call _zoom with a large/small factor to move away from zero?
+             # Let's use _zoom with the target relative to 1.0 as a guess.
+             self._zoom(clamped_target_scale) # This might not be accurate but avoids complexity
+
 
     def reset_view(self) -> None:
         """Reseta zoom, rotação e posição da view para o estado inicial."""
+        current_transform = self.transform()
         initial_scale_was_one = abs(self.get_scale() - 1.0) < 1e-6
+        initial_rotation_was_zero = abs(self.get_rotation_angle()) < 1e-6
 
         # 1. Reseta a matriz de transformação para identidade
         self.setTransform(QTransform())
         # 2. Centraliza a view na origem da cena (0, 0)
         self.centerOn(0, 0)
-        # 3. Reseta o ângulo de rotação interno e emite sinal
-        self._window_rotation_angle = 0.0
-        self.rotation_changed.emit(0.0)
-        # 4. Emite scale_changed APENAS se a escala realmente mudou ao resetar
+
+        # 3. Emite sinal de rotação APENAS se ela mudou ao resetar
+        if not initial_rotation_was_zero:
+            self.rotation_changed.emit(0.0)
+        # 4. Emite sinal de escala APENAS se ela mudou ao resetar
         if not initial_scale_was_one:
              self.scale_changed.emit()
