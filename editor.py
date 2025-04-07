@@ -1,15 +1,18 @@
 # editor.py
 import sys
+import os
 from enum import Enum, auto
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Union
 
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QGraphicsScene,
                              QToolBar, QAction, QActionGroup, QDialog,
                              QMessageBox, QGraphicsView, QGraphicsLineItem,
                              QGraphicsPathItem, QInputDialog, QGraphicsEllipseItem,
-                             QGraphicsPolygonItem, QColorDialog, QPushButton, QGraphicsItem)
-from PyQt5.QtCore import QPointF, Qt, pyqtSignal, QSize
-from PyQt5.QtGui import QPainterPath, QPen, QColor, QPolygonF, QIcon, QPixmap
+                             QGraphicsPolygonItem, QColorDialog, QPushButton, QGraphicsItem,
+                             QFileDialog, QMenu, QMenuBar)
+from PyQt5.QtCore import QPointF, Qt, pyqtSignal, QSize, QLineF, QRectF
+from PyQt5.QtGui import (QPainterPath, QPen, QColor, QPolygonF, QIcon, QPixmap,
+                         QCloseEvent, QBrush) # Added QBrush explicitly
 
 from view import GraphicsView
 from models.point import Point
@@ -17,7 +20,10 @@ from models.line import Line
 from models.polygon import Polygon
 from models.coordinates_input import CoordinateInputDialog
 from controllers.transformation_controller import TransformationController
+from io_handler import IOHandler
+from object_manager import ObjectManager
 
+DataObject = Union[Point, Line, Polygon]
 
 class DrawingMode(Enum):
     POINT = auto()
@@ -31,7 +37,7 @@ class GraphicsEditor(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Editor Gráfico (com Transformações e Cores)")
+        self.setWindowTitle("Editor Gráfico")
         self.resize(1000, 750)
 
         # --- Estado Interno ---
@@ -52,14 +58,52 @@ class GraphicsEditor(QMainWindow):
         self._view = GraphicsView(self._scene, self)
         self.setCentralWidget(self._view)
 
-        # --- Controller ---
+        # --- Controller e Handlers ---
         self._transformation_controller = TransformationController(self)
+        self._io_handler = IOHandler(self)
+        self._object_manager = ObjectManager()
 
         # --- Configuração ---
+        self._setup_menu_bar()
         self._setup_toolbar()
         self._connect_signals()
         self._update_view_interaction()
         self.show()
+
+    def _setup_menu_bar(self) -> None:
+        """Cria e configura a barra de menus."""
+        menubar = self.menuBar()
+
+        # --- Menu Arquivo ---
+        file_menu = menubar.addMenu("&Arquivo")
+
+        # Limpar Cena
+        clear_action = QAction(QIcon("icons/clear.png"), "&Limpar Cena", self)
+        clear_action.setToolTip("Limpar todos os objetos da cena")
+        clear_action.triggered.connect(self._clear_scene)
+        file_menu.addAction(clear_action)
+
+        file_menu.addSeparator()
+
+        # Carregar OBJ
+        load_obj_action = QAction(QIcon("icons/open.png"), "Carregar &OBJ...", self)
+        load_obj_action.setToolTip("Carregar geometria de um arquivo Wavefront OBJ")
+        load_obj_action.triggered.connect(self._prompt_load_obj)
+        file_menu.addAction(load_obj_action)
+
+        # Salvar OBJ
+        save_obj_action = QAction(QIcon("icons/save.png"), "&Salvar como OBJ...", self)
+        save_obj_action.setToolTip("Salvar a cena atual em um arquivo Wavefront OBJ")
+        save_obj_action.triggered.connect(self._prompt_save_obj)
+        file_menu.addAction(save_obj_action)
+
+        file_menu.addSeparator()
+
+        # Sair
+        exit_action = QAction(QIcon("icons/exit.png"), "&Sair", self)
+        exit_action.setToolTip("Fechar a aplicação")
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
 
     def _setup_toolbar(self) -> None:
         """Cria e configura a barra de ferramentas principal."""
@@ -258,7 +302,8 @@ class GraphicsEditor(QMainWindow):
              drawing_finished = True
 
         if self._drawing_mode == DrawingMode.POLYGON and self._current_polygon_points:
-            if commit and len(self._current_polygon_points) >= 3:
+            min_points_needed = 2 if self._current_polygon_is_open else 3
+            if commit and len(self._current_polygon_points) >= min_points_needed:
                 polygon_data = Polygon(
                     self._current_polygon_points.copy(),
                     self._current_polygon_is_open,
@@ -266,6 +311,7 @@ class GraphicsEditor(QMainWindow):
                 )
                 graphics_item = polygon_data.create_graphics_item()
                 self._scene.addItem(graphics_item)
+
             self._current_polygon_points = []
             self._current_polygon_is_open = False
             drawing_finished = True
@@ -285,6 +331,17 @@ class GraphicsEditor(QMainWindow):
             for item in selected:
                 if item.scene():
                     self._scene.removeItem(item)
+            self._scene.update()
+
+    def _clear_scene(self) -> None:
+        """Limpa todos os itens da cena."""
+        reply = QMessageBox.question(self, "Confirmar Limpeza",
+                                     "Tem certeza que deseja limpar toda a cena? Esta ação não pode ser desfeita.",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            self._finish_current_drawing(commit=False)
+            self._scene.clear()
+            self._scene.update()
 
     def _open_coordinate_input_dialog(self) -> None:
         """Abre um diálogo para adicionar formas via entrada manual de coordenadas."""
@@ -348,7 +405,8 @@ class GraphicsEditor(QMainWindow):
                 self._scene.addItem(line_data.create_graphics_item())
 
             elif dialog_mode_str == 'polygon':
-                if len(coords) < 3: raise ValueError("Coordenadas do polígono insuficientes (requer 3 pontos).")
+                min_points = 2 if is_open else 3
+                if len(coords) < min_points: raise ValueError(f"Coordenadas do polígono insuficientes (requer {min_points} pontos).")
                 polygon_points_data = [Point(x, y, color=color) for x, y in coords]
                 polygon_data = Polygon(polygon_points_data, is_open, color=color)
                 self._scene.addItem(polygon_data.create_graphics_item())
@@ -372,14 +430,14 @@ class GraphicsEditor(QMainWindow):
         data_object = graphics_item.data(0)
 
         if data_object is None:
-            QMessageBox.critical(self, "Erro Interno",
-                                 "Não foi possível encontrar os dados associados ao objeto selecionado.")
-            return
+             QMessageBox.critical(self, "Erro Interno",
+                                  "Não foi possível encontrar os dados associados ao objeto selecionado. Verifique se setData(0, self) está sendo chamado corretamente na criação do item.")
+             return
 
         self._transformation_controller.request_transformation(data_object)
 
 
-    def _handle_object_transformed(self, data_object: object) -> None:
+    def _handle_object_transformed(self, data_object: DataObject) -> None:
         """
         Slot chamado pelo TransformationController após o objeto de dados ser modificado.
         Atualiza o QGraphicsItem correspondente na cena.
@@ -392,42 +450,56 @@ class GraphicsEditor(QMainWindow):
 
         try:
             needs_update = False
+            current_pen = graphics_item.pen()
+            current_brush = graphics_item.brush() if hasattr(graphics_item, 'brush') else None
 
             if isinstance(data_object, Point) and isinstance(graphics_item, QGraphicsEllipseItem):
                 size = 6.0; offset = size / 2.0
                 new_rect = QRectF(data_object.x - offset, data_object.y - offset, size, size)
+                new_pen = QPen(data_object.color, 1)
+                new_brush = QBrush(data_object.color)
                 if graphics_item.rect() != new_rect:
-                    graphics_item.setRect(new_rect)
-                    needs_update = True
-
+                    graphics_item.setRect(new_rect); needs_update = True
+                if current_pen != new_pen or current_brush != new_brush:
+                    graphics_item.setPen(new_pen); graphics_item.setBrush(new_brush); needs_update = True
 
             elif isinstance(data_object, Line) and isinstance(graphics_item, QGraphicsLineItem):
                 new_line = QLineF(data_object.start.to_qpointf(), data_object.end.to_qpointf())
+                new_pen = QPen(data_object.color, 2)
                 if graphics_item.line() != new_line:
-                    graphics_item.setLine(new_line)
-                    needs_update = True
-
+                    graphics_item.setLine(new_line); needs_update = True
+                if current_pen != new_pen:
+                    graphics_item.setPen(new_pen); needs_update = True
 
             elif isinstance(data_object, Polygon) and isinstance(graphics_item, QGraphicsPolygonItem):
                 new_polygon_qf = QPolygonF()
-                for point_data in data_object.points:
-                    new_polygon_qf.append(point_data.to_qpointf())
+                for p in data_object.points: new_polygon_qf.append(p.to_qpointf())
+
+                new_pen = QPen(data_object.color, 2)
+                new_brush = QBrush()
+                if data_object.is_open:
+                    new_pen.setStyle(Qt.DashLine); new_brush.setStyle(Qt.NoBrush)
+                else:
+                    new_pen.setStyle(Qt.SolidLine); new_brush.setStyle(Qt.SolidPattern)
+                    fill_color = QColor(data_object.color); fill_color.setAlphaF(0.35); new_brush.setColor(fill_color)
 
                 if graphics_item.polygon() != new_polygon_qf:
-                    graphics_item.setPolygon(new_polygon_qf)
-                    needs_update = True
+                    graphics_item.setPolygon(new_polygon_qf); needs_update = True
+                if current_pen != new_pen or current_brush != new_brush:
+                     graphics_item.setPen(new_pen); graphics_item.setBrush(new_brush); needs_update = True
 
             else:
-                print(f"Aviso: Tipos incompatíveis de objeto de dados e item gráfico durante a atualização: {type(data_object)}, {type(graphics_item)}")
+                print(f"Aviso: Tipos incompatíveis durante atualização: {type(data_object)}, {type(graphics_item)}")
 
             if needs_update:
                 graphics_item.update()
+                self._scene.update()
 
         except Exception as e:
              QMessageBox.critical(self, "Erro ao Atualizar Gráfico", f"Falha ao atualizar item gráfico após transformação: {e}")
 
 
-    def _find_graphics_item_for_object(self, data_obj: object) -> Optional[QGraphicsItem]:
+    def _find_graphics_item_for_object(self, data_obj: DataObject) -> Optional[QGraphicsItem]:
         """Encontra o QGraphicsItem associado ao objeto de dados fornecido usando setData."""
         if data_obj is None: return None
         for item in self._scene.items():
@@ -436,8 +508,156 @@ class GraphicsEditor(QMainWindow):
                 return item
         return None
 
-    def closeEvent(self, event: 'QCloseEvent') -> None:
-        """Trata o evento de fechamento da janela principal, garantindo a limpeza."""
+    def _prompt_load_obj(self) -> None:
+        """Handles the workflow for loading an OBJ file."""
+        obj_filepath = self._io_handler.prompt_load_obj()
+        if not obj_filepath:
+            return
+
+        reply = QMessageBox.question(self, "Confirmar Carregamento",
+                                     "Carregar este arquivo limpará a cena atual. Continuar?",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.No:
+            return
+
+        # Read OBJ lines and find potential MTL file reference
+        read_result = self._io_handler.read_obj_lines(obj_filepath)
+        if read_result is None:
+            return # Error handled by IOHandler
+        obj_lines, mtl_filename_relative = read_result
+
+        # Load materials if MTL file is specified
+        material_colors: Dict[str, QColor] = {}
+        mtl_warnings: List[str] = []
+        if mtl_filename_relative:
+            obj_dir = os.path.dirname(obj_filepath)
+            mtl_filepath = os.path.normpath(os.path.join(obj_dir, mtl_filename_relative)) # Normalize path
+            if os.path.exists(mtl_filepath):
+                material_colors, mtl_warnings = self._io_handler.read_mtl_file(mtl_filepath)
+            else:
+                mtl_warnings.append(f"Arquivo MTL referenciado '{mtl_filename_relative}' não encontrado em '{mtl_filepath}'.")
+
+
+        # Parse OBJ data using ObjectManager, providing materials
+        parsed_objects, obj_warnings = self._object_manager.parse_obj_data(
+            obj_lines,
+            material_colors,
+            self._current_draw_color # Fallback color
+        )
+
+        # Combine warnings
+        all_warnings = mtl_warnings + obj_warnings
+
+        # Process results
+        self._finish_current_drawing(commit=False)
+        self._scene.clear()
+
+        if not parsed_objects and not all_warnings:
+             QMessageBox.information(self, "Arquivo Vazio ou Inválido",
+                                     f"Nenhum objeto geométrico válido foi encontrado em '{os.path.basename(obj_filepath)}'.")
+             return
+
+        # Add parsed objects to the scene
+        creation_errors = []
+        for data_obj in parsed_objects:
+            try:
+                # Create the graphics item using the model's method
+                graphics_item = data_obj.create_graphics_item()
+
+                # Re-apply styles based on loaded data (create_graphics_item should use data_obj.color etc.)
+                # This might be redundant if create_graphics_item is correct, but ensures consistency.
+                if isinstance(graphics_item, QGraphicsEllipseItem): # Point
+                    graphics_item.setPen(QPen(data_obj.color, 1))
+                    graphics_item.setBrush(QBrush(data_obj.color))
+                elif isinstance(graphics_item, QGraphicsLineItem): # Line
+                     graphics_item.setPen(QPen(data_obj.color, 2))
+                elif isinstance(graphics_item, QGraphicsPolygonItem): # Polygon
+                    pen = QPen(data_obj.color, 2)
+                    brush = QBrush()
+                    if data_obj.is_open:
+                        pen.setStyle(Qt.DashLine); brush.setStyle(Qt.NoBrush)
+                    else:
+                        pen.setStyle(Qt.SolidLine); brush.setStyle(Qt.SolidPattern)
+                        fill_color = QColor(data_obj.color); fill_color.setAlphaF(0.35); brush.setColor(fill_color)
+                    graphics_item.setPen(pen)
+                    graphics_item.setBrush(brush)
+
+                self._scene.addItem(graphics_item)
+            except Exception as e:
+                creation_errors.append(f"Erro ao criar item gráfico para {type(data_obj).__name__}: {e}")
+
+        self._scene.update()
+        all_warnings.extend(creation_errors)
+
+        # Report outcome
+        if all_warnings:
+            # Format the warnings list into a bulleted string first
+            formatted_warnings = "- " + "\n- ".join(all_warnings)
+            QMessageBox.warning(self, "Carregamento Concluído com Avisos",
+                                f"Arquivo OBJ '{os.path.basename(obj_filepath)}' carregado.\n\n"
+                                f"Avisos:\n{formatted_warnings}")
+        else:
+            QMessageBox.information(self, "Sucesso",
+                                    f"Arquivo OBJ '{os.path.basename(obj_filepath)}' carregado com sucesso.")
+
+
+    def _prompt_save_obj(self) -> None:
+        """Handles the workflow for saving the scene to an OBJ file."""
+        scene_data_objects: List[DataObject] = []
+        for item in self._scene.items():
+            data_object = item.data(0)
+            if isinstance(data_object, (Point, Line, Polygon)):
+                 scene_data_objects.append(data_object)
+
+        if not scene_data_objects:
+             QMessageBox.information(self, "Nada para Salvar",
+                                     "A cena está vazia.")
+             return
+
+        # Prompt for base filepath (e.g., "mydir/myscene")
+        base_filepath = self._io_handler.prompt_save_obj("scene.obj")
+        if not base_filepath:
+            return # User cancelled
+
+        # Determine MTL filename based on base path
+        mtl_filename = os.path.basename(base_filepath) + ".mtl"
+
+        # Generate OBJ and MTL data
+        obj_lines, mtl_lines, warnings_gen = self._object_manager.generate_obj_data(
+            scene_data_objects, mtl_filename
+        )
+
+        if obj_lines is None: # Check if obj_lines generation failed
+            msg = "Falha ao gerar dados OBJ."
+            if warnings_gen:
+                # Format warnings first
+                formatted_warnings = "- " + "\n- ".join(warnings_gen)
+                msg += f"\n\nAvisos:\n{formatted_warnings}"
+            QMessageBox.warning(self, "Erro na Geração OBJ", msg)
+            return
+
+        # Write both files using IOHandler
+        success = self._io_handler.write_obj_and_mtl(base_filepath, obj_lines, mtl_lines or [])
+
+        # Report outcome
+        if success:
+            obj_filename_saved = os.path.basename(base_filepath + ".obj")
+            msg = f"Cena salva com sucesso como '{obj_filename_saved}'"
+            if mtl_lines:
+                 msg += f" e '{mtl_filename}'"
+            msg += "."
+
+            if warnings_gen:
+                 # Format warnings first
+                 formatted_warnings = "- " + "\n- ".join(warnings_gen)
+                 QMessageBox.warning(self, "Salvo com Avisos", f"{msg}\n\nAvisos durante a geração:\n{formatted_warnings}")
+            else:
+                 QMessageBox.information(self, "Sucesso", msg)
+        # Error message is handled by IOHandler.write_obj_and_mtl
+
+
+    # --- Close Event (Keep as before) ---
+    def closeEvent(self, event: QCloseEvent) -> None:
         self._finish_current_drawing(commit=False)
         super().closeEvent(event)
 
@@ -451,18 +671,16 @@ def main():
 
 if __name__ == "__main__":
     import os
-    icon_dir = "icons"
-    os.makedirs(icon_dir, exist_ok=True)
-    dummy_icons = ["select.png", "pan.png", "point.png", "line.png", "polygon.png", "coords.png", "transform.png", "add.png"] # Added add.png
+    icon_dir = "icons"; os.makedirs(icon_dir, exist_ok=True)
+    dummy_icons = ["select.png", "pan.png", "point.png", "line.png", "polygon.png", "coords.png", "transform.png", "add.png", "clear.png", "open.png", "save.png", "exit.png"]
     for icon_name in dummy_icons:
         icon_path = os.path.join(icon_dir, icon_name)
         if not os.path.exists(icon_path):
              try:
-                  from PIL import Image
-                  img = Image.new('RGBA', (24, 24), (0,0,0,0))
-                  img.save(icon_path)
-             except ImportError:
-                  print(f"Pillow não instalado, não é possível criar ícone dummy: {icon_path}")
-                  with open(icon_path, 'w') as f: pass
-
+                  from PIL import Image, ImageDraw
+                  img = Image.new('RGBA', (24, 24), (0,0,0,0)); draw = ImageDraw.Draw(img)
+                  draw.rectangle([(2,2), (21,21)], outline="gray", width=1); draw.text((4,4), icon_name[:2], fill="black")
+                  img.save(icon_path); print(f"Criado ícone dummy: {icon_path}")
+             except ImportError: print(f"Pillow não instalado, não é possível criar ícone dummy: {icon_path}"); open(icon_path, 'w').close()
+             except Exception as e: print(f"Erro ao criar ícone dummy {icon_path}: {e}"); open(icon_path, 'w').close()
     main()
