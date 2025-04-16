@@ -2,7 +2,7 @@
 import math
 from typing import List, Tuple, Optional, Union
 
-from PyQt5.QtCore import QRectF, QPointF
+from PyQt5.QtCore import QRectF
 
 Point2D = Tuple[float, float]
 ClipRect = Tuple[float, float, float, float]
