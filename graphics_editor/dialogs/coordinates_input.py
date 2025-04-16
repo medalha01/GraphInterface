@@ -51,6 +51,15 @@ class CoordinateInputDialog(QDialog):
             None  # Armazena dados validados no OK
         )
 
+        self.x_input: Optional[QLineEdit] = None
+        self.y_input: Optional[QLineEdit] = None
+        self.x1_input: Optional[QLineEdit] = None
+        self.y1_input: Optional[QLineEdit] = None
+        self.x2_input: Optional[QLineEdit] = None
+        self.y2_input: Optional[QLineEdit] = None
+        self.open_polygon_checkbox: Optional[QCheckBox] = None
+        self.filled_polygon_checkbox: Optional[QCheckBox] = None
+
         self._setup_ui()
         self.setMinimumWidth(350)
 
@@ -115,7 +124,21 @@ class CoordinateInputDialog(QDialog):
             self.open_polygon_checkbox.setToolTip(
                 "Marque para criar uma sequência de linhas abertas."
             )
+            self.filled_polygon_checkbox = QCheckBox("Preenchido")
+            self.filled_polygon_checkbox.setToolTip(
+                "Marque para preencher o polígono (somente se fechado)."
+            )
+            self.open_polygon_checkbox.toggled.connect(
+                lambda checked: self.filled_polygon_checkbox.setDisabled(checked)
+            )
+            self.open_polygon_checkbox.toggled.connect(
+                lambda checked: (
+                    self.filled_polygon_checkbox.setChecked(False) if checked else None
+                )
+            )
+
             poly_options_layout.addWidget(self.open_polygon_checkbox)
+            poly_options_layout.addWidget(self.filled_polygon_checkbox)
             poly_options_layout.addStretch()
             add_point_btn = QPushButton(self._get_icon("add.png"), " Vértice")
             add_point_btn.setToolTip("Adicionar campos para mais um vértice")
@@ -196,9 +219,6 @@ class CoordinateInputDialog(QDialog):
         point_layout.addWidget(QLabel(f"{point_index}:"))
         point_layout.addWidget(x_input)
         point_layout.addWidget(y_input)
-        # Botão Remover (opcional) - pode adicionar complexidade
-        # remove_btn = QPushButton("X") ... connect ... addWidget ...
-        # point_layout.addStretch() # Se não houver botão remover
 
         self.polygon_points_layout.addLayout(point_layout)
         self.polygon_point_widgets.append((x_input, y_input))
@@ -241,35 +261,48 @@ class CoordinateInputDialog(QDialog):
 
         # 1. Coleta textos crus das entradas relevantes
         if self.mode == "point":
-            raw_texts = [(self.x_input.text(), self.y_input.text())]
-            if not all(raw_texts[0]):
-                raise ValueError("Coordenadas X e Y são obrigatórias.")
+            if self.x_input and self.y_input:
+                raw_texts = [(self.x_input.text(), self.y_input.text())]
+                if not all(raw_texts[0]):
+                    raise ValueError("Coordenadas X e Y são obrigatórias.")
+            else:
+                raise ValueError("Erro interno: Campos de ponto não inicializados.")
         elif self.mode == "line":
-            raw_texts = [
-                (self.x1_input.text(), self.y1_input.text()),
-                (self.x2_input.text(), self.y2_input.text()),
-            ]
-            if not all(raw_texts[0]) or not all(raw_texts[1]):
-                raise ValueError(
-                    "Todas as 4 coordenadas são obrigatórias para a linha."
-                )
-        elif self.mode == "polygon":
-            # Coleta apenas de campos preenchidos (X e Y)
-            for i, (x_input, y_input) in enumerate(self.polygon_point_widgets):
-                x_text, y_text = x_input.text().strip(), y_input.text().strip()
-                if x_text and y_text:
-                    raw_texts.append((x_text, y_text))
-                elif x_text or y_text:  # Apenas um preenchido? Erro.
+            if self.x1_input and self.y1_input and self.x2_input and self.y2_input:
+                raw_texts = [
+                    (self.x1_input.text(), self.y1_input.text()),
+                    (self.x2_input.text(), self.y2_input.text()),
+                ]
+                if not all(raw_texts[0]) or not all(raw_texts[1]):
                     raise ValueError(
-                        f"Vértice {i+1}: Preencha X e Y, ou deixe ambos em branco."
+                        "Todas as 4 coordenadas são obrigatórias para a linha."
                     )
-            data["is_open"] = self.open_polygon_checkbox.isChecked()
-            min_points = 2 if data["is_open"] else 3
-            if len(raw_texts) < min_points:
-                tipo = "aberto" if data["is_open"] else "fechado"
-                raise ValueError(
-                    f"Polígono {tipo} requer pelo menos {min_points} vértices preenchidos ({len(raw_texts)} encontrados)."
+            else:
+                raise ValueError("Erro interno: Campos de linha não inicializados.")
+        elif self.mode == "polygon":
+            if self.open_polygon_checkbox and self.filled_polygon_checkbox:
+                # Coleta apenas de campos preenchidos (X e Y)
+                for i, (x_input, y_input) in enumerate(self.polygon_point_widgets):
+                    x_text, y_text = x_input.text().strip(), y_input.text().strip()
+                    if x_text and y_text:
+                        raw_texts.append((x_text, y_text))
+                    elif x_text or y_text:  # Apenas um preenchido? Erro.
+                        raise ValueError(
+                            f"Vértice {i+1}: Preencha X e Y, ou deixe ambos em branco."
+                        )
+                data["is_open"] = self.open_polygon_checkbox.isChecked()
+                data["is_filled"] = (
+                    self.filled_polygon_checkbox.isChecked() and not data["is_open"]
                 )
+
+                min_points = 2 if data["is_open"] else 3
+                if len(raw_texts) < min_points:
+                    tipo = "aberto" if data["is_open"] else "fechado"
+                    raise ValueError(
+                        f"Polígono {tipo} requer pelo menos {min_points} vértices preenchidos ({len(raw_texts)} encontrados)."
+                    )
+            else:
+                raise ValueError("Erro interno: Campos de polígono não inicializados.")
 
         # 2. Converte textos para float
         coords: List[Tuple[float, float]] = []

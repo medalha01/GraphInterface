@@ -29,6 +29,12 @@ from PyQt5.QtWidgets import (
     QSlider,
     QApplication,
     QSizePolicy,
+    QRadioButton,
+    QWidgetAction,
+    QWidget,
+    QVBoxLayout,
+    QGroupBox,
+    QGraphicsRectItem,
 )
 from PyQt5.QtCore import QPointF, Qt, pyqtSignal, QSize, QLineF, QRectF, QTimer, QLocale
 from PyQt5.QtGui import (
@@ -54,9 +60,12 @@ from .dialogs.transformation_dialog import TransformationDialog
 from .controllers.transformation_controller import TransformationController
 from .io_handler import IOHandler
 from .object_manager import ObjectManager
+from . import clipping as clp  # Import clipping module
 
 # Alias para tipos de dados dos modelos
 DataObject = Union[Point, Line, Polygon]
+
+LineClipperFunc = clp.cohen_sutherland
 
 
 class DrawingMode(Enum):
@@ -69,12 +78,21 @@ class DrawingMode(Enum):
     PAN = auto()
 
 
+class LineClippingAlgorithm(Enum):
+    """Tipos de algoritmos de clipping de linha."""
+
+    COHEN_SUTHERLAND = auto()
+    LIANG_BARSKY = auto()
+
+
 class GraphicsEditor(QMainWindow):
     """Janela principal da aplicação para o editor gráfico 2D."""
 
     # Constantes para o slider de zoom
     SLIDER_RANGE_MIN = 0
     SLIDER_RANGE_MAX = 400
+
+    DEFAULT_CLIP_RECT = QRectF(-500.0, -400.0, 1000.0, 800.0)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -89,9 +107,14 @@ class GraphicsEditor(QMainWindow):
         self._current_line_start: Optional[Point] = None
         self._current_polygon_points: List[Point] = []
         self._current_polygon_is_open: bool = False
+        self._current_polygon_is_filled: bool = False  # Added
         self._current_draw_color: QColor = QColor(Qt.black)
         self._unsaved_changes: bool = False
         self._current_filepath: Optional[str] = None  # Caminho do arquivo .obj atual
+        self._selected_line_clipper: LineClippingAlgorithm = (
+            LineClippingAlgorithm.COHEN_SUTHERLAND
+        )
+        self._clip_rect: QRectF = self.DEFAULT_CLIP_RECT
 
         # --- Itens Gráficos Temporários (Pré-visualização) ---
         self._temp_line_item: Optional[QGraphicsLineItem] = None
@@ -104,6 +127,12 @@ class GraphicsEditor(QMainWindow):
         self._scene.setSceneRect(-10000, -10000, 20000, 20000)
         self._view = GraphicsView(self._scene, self)
         self.setCentralWidget(self._view)
+
+        self._clip_rect_item = QGraphicsRectItem(self._clip_rect)
+        self._clip_rect_item.setPen(QPen(QColor(0, 0, 255, 100), 1, Qt.DashLine))
+        self._clip_rect_item.setBrush(QBrush(Qt.NoBrush))
+        self._clip_rect_item.setZValue(-1)
+        self._scene.addItem(self._clip_rect_item)
 
         # --- Controladores e Gerenciadores ---
         self._transformation_controller = TransformationController(self)
@@ -213,6 +242,12 @@ class GraphicsEditor(QMainWindow):
         view_menu.addAction(reset_view_action)
 
         view_menu.addSeparator()
+        toggle_viewport_action = QAction(
+            "Mostrar/Ocultar Viewport", self, checkable=True
+        )
+        toggle_viewport_action.setChecked(True)
+        toggle_viewport_action.triggered.connect(self._toggle_viewport_visibility)
+        view_menu.addAction(toggle_viewport_action)
 
     def _setup_toolbar(self) -> None:
         """Configura a barra de ferramentas principal."""
@@ -283,6 +318,35 @@ class GraphicsEditor(QMainWindow):
         # Não definimos shortcut aqui para evitar conflito com menu
         transform_action_tb.triggered.connect(self._open_transformation_dialog)
         toolbar.addAction(transform_action_tb)
+
+        toolbar.addSeparator()
+        clipping_group_box = QGroupBox("Clipping Linha")
+        clipping_layout = QVBoxLayout()
+        clipping_layout.setContentsMargins(2, 2, 2, 2)
+        clipping_layout.setSpacing(2)
+
+        self.cs_radio = QRadioButton("Cohen-Suth.")
+        self.lb_radio = QRadioButton("Liang-Barsky")
+        self.cs_radio.setChecked(
+            self._selected_line_clipper == LineClippingAlgorithm.COHEN_SUTHERLAND
+        )
+        self.lb_radio.setChecked(
+            self._selected_line_clipper == LineClippingAlgorithm.LIANG_BARSKY
+        )
+
+        self.cs_radio.toggled.connect(
+            lambda: self._set_line_clipper(LineClippingAlgorithm.COHEN_SUTHERLAND)
+        )
+        self.lb_radio.toggled.connect(
+            lambda: self._set_line_clipper(LineClippingAlgorithm.LIANG_BARSKY)
+        )
+
+        clipping_layout.addWidget(self.cs_radio)
+        clipping_layout.addWidget(self.lb_radio)
+        clipping_group_box.setLayout(clipping_layout)
+        clipping_action = QWidgetAction(self)
+        clipping_action.setDefaultWidget(clipping_group_box)
+        toolbar.addAction(clipping_action)
 
     def _setup_status_bar(self) -> None:
         """Configura a barra de status com informações e controles."""
@@ -539,8 +603,6 @@ class GraphicsEditor(QMainWindow):
 
         if self._drawing_mode == DrawingMode.POINT:
             self._add_data_object_to_scene(current_point_data)
-            self._mark_as_modified()
-
         elif self._drawing_mode == DrawingMode.LINE:
             if self._current_line_start is None:
                 self._current_line_start = current_point_data
@@ -561,24 +623,33 @@ class GraphicsEditor(QMainWindow):
                     current_point_data,
                     color=self._current_draw_color,
                 )
-                self._add_data_object_to_scene(line_data)
+                self._add_data_object_to_scene(line_data)  # Clipping happens inside
                 self._finish_current_drawing(commit=True)
-                self._mark_as_modified()
 
         elif self._drawing_mode == DrawingMode.POLYGON:
-            # Pergunta sobre tipo na primeira vez
             if not self._current_polygon_points:
-                reply = QMessageBox.question(
+                type_reply = QMessageBox.question(
                     self,
-                    "Tipo de Forma",
-                    "Deseja criar uma Polilinha (sequência de linhas ABERTAS)?\n\n"
+                    "Tipo de Polígono",
+                    "Deseja criar uma Polilinha (ABERTA)?\n\n"
                     "- Sim: Polilinha (>= 2 pontos).\n"
                     "- Não: Polígono Fechado (>= 3 pontos).\n\n"
                     "(Clique com o botão direito para finalizar)",
                     QMessageBox.Yes | QMessageBox.No,
                     QMessageBox.No,
                 )
-                self._current_polygon_is_open = reply == QMessageBox.Yes
+                self._current_polygon_is_open = type_reply == QMessageBox.Yes
+
+                self._current_polygon_is_filled = False
+                if not self._current_polygon_is_open:
+                    fill_reply = QMessageBox.question(
+                        self,
+                        "Preenchimento",
+                        "Deseja preencher o polígono fechado?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.No,
+                    )
+                    self._current_polygon_is_filled = fill_reply == QMessageBox.Yes
 
             # Evita pontos duplicados consecutivos
             if (
@@ -591,7 +662,6 @@ class GraphicsEditor(QMainWindow):
 
             self._current_polygon_points.append(current_point_data)
             self._update_polygon_preview(scene_pos)
-            self._mark_as_modified()  # Modifica a cada ponto
 
     def _handle_scene_right_click(self, scene_pos: QPointF) -> None:
         """Processa clique direito, usado para finalizar polígonos."""
@@ -658,11 +728,11 @@ class GraphicsEditor(QMainWindow):
                 # Cria o objeto Polygon final
                 polygon_data = Polygon(
                     self._current_polygon_points.copy(),
-                    self._current_polygon_is_open,
+                    is_open=self._current_polygon_is_open,
                     color=self._current_draw_color,
+                    is_filled=self._current_polygon_is_filled,
                 )
                 self._add_data_object_to_scene(polygon_data)
-                self._mark_as_modified()  # Marca modificação ao finalizar
             elif commit and not can_commit:
                 # Tentou finalizar sem pontos suficientes
                 QMessageBox.warning(
@@ -677,6 +747,7 @@ class GraphicsEditor(QMainWindow):
             # Reseta estado do polígono (se commit bem sucedido ou cancelamento)
             self._current_polygon_points = []
             self._current_polygon_is_open = False
+            self._current_polygon_is_filled = False
             drawing_finished_or_cancelled = True
 
         if drawing_finished_or_cancelled:
@@ -693,21 +764,74 @@ class GraphicsEditor(QMainWindow):
 
     # --- Gerenciamento de Objetos e Cena ---
 
+    def _get_clip_rect_tuple(self) -> clp.ClipRect:
+        rect = self._clip_rect
+        return (rect.left(), rect.top(), rect.right(), rect.bottom())
+
     def _add_data_object_to_scene(self, data_object: DataObject):
         """Cria o QGraphicsItem e o adiciona à cena."""
+        clipped_data_object: Optional[DataObject] = None
+        clip_rect_tuple = self._get_clip_rect_tuple()
+        added_item = False
+
         try:
-            graphics_item = data_object.create_graphics_item()
-            # Associa o objeto de dados ao item gráfico para referência futura
-            graphics_item.setData(0, data_object)  # Chave 0 por convenção
-            # Aplica estilo (pode ser redundante se create_graphics_item já faz, mas garante)
-            self._apply_style_to_item(graphics_item, data_object)
-            self._scene.addItem(graphics_item)
-            # A view se encarrega da transformação visual (zoom/rotação)
+            if isinstance(data_object, Point):
+                clipped_coords = clp.clip_point(
+                    data_object.get_coords(), clip_rect_tuple
+                )
+                if clipped_coords:
+                    clipped_data_object = Point(
+                        clipped_coords[0], clipped_coords[1], data_object.color
+                    )
+            elif isinstance(data_object, Line):
+                clipper_func = (
+                    clp.cohen_sutherland
+                    if self._selected_line_clipper
+                    == LineClippingAlgorithm.COHEN_SUTHERLAND
+                    else clp.liang_barsky
+                )
+                clipped_segment = clipper_func(
+                    data_object.start.get_coords(),
+                    data_object.end.get_coords(),
+                    clip_rect_tuple,
+                )
+                if clipped_segment:
+                    p1_coords, p2_coords = clipped_segment
+                    start_pt = Point(
+                        p1_coords[0], p1_coords[1], data_object.start.color
+                    )
+                    end_pt = Point(p2_coords[0], p2_coords[1], data_object.end.color)
+                    clipped_data_object = Line(start_pt, end_pt, data_object.color)
+            elif isinstance(data_object, Polygon):
+                clipped_vertices_coords = clp.sutherland_hodgman(
+                    data_object.get_coords(), clip_rect_tuple
+                )
+
+                min_points = 2 if data_object.is_open else 3
+                if len(clipped_vertices_coords) >= min_points:
+                    clipped_points = [
+                        Point(x, y, data_object.color)
+                        for x, y in clipped_vertices_coords
+                    ]
+                    clipped_data_object = Polygon(
+                        clipped_points,
+                        is_open=data_object.is_open,
+                        color=data_object.color,
+                        is_filled=data_object.is_filled,
+                    )
+
+            if clipped_data_object:
+                graphics_item = clipped_data_object.create_graphics_item()
+                graphics_item.setData(0, clipped_data_object)
+                self._scene.addItem(graphics_item)
+                self._mark_as_modified()
+                added_item = True
+
         except Exception as e:
             QMessageBox.critical(
                 self,
-                "Erro ao Adicionar Item",
-                f"Não foi possível criar item gráfico para {type(data_object).__name__}: {e}",
+                "Erro ao Adicionar/Clipar Item",
+                f"Não foi possível clipar ou criar item gráfico para {type(data_object).__name__}: {e}",
             )
             print(f"Erro detalhes: {e}")
 
@@ -718,16 +842,13 @@ class GraphicsEditor(QMainWindow):
             self._set_status_message("Nenhum item selecionado para excluir.", 2000)
             return
 
-        # Confirmação opcional (desativada por padrão para fluidez)
-        # reply = QMessageBox.question(self, "Confirmar Exclusão", ...)
-        # if reply == QMessageBox.No: return
-
         items_deleted = 0
         for item in selected:
+            if item is self._clip_rect_item:
+                continue
             if item.scene():  # Verifica se ainda está na cena
                 self._scene.removeItem(item)
                 items_deleted += 1
-                # Considerar deletar o DataObject de alguma lista interna se houver
 
         if items_deleted > 0:
             self._scene.update()
@@ -743,7 +864,12 @@ class GraphicsEditor(QMainWindow):
         """Limpa todos os itens da cena e reseta estado."""
         self._finish_current_drawing(commit=False)
         self._scene.clearSelection()
-        self._scene.clear()  # Mais eficiente que iterar e remover
+        items_to_remove = [
+            item for item in self._scene.items() if item is not self._clip_rect_item
+        ]
+        for item in items_to_remove:
+            self._scene.removeItem(item)
+
         self._scene.update()
         self._reset_view()
         self._mark_as_saved()
@@ -754,7 +880,7 @@ class GraphicsEditor(QMainWindow):
     def _reset_view(self) -> None:
         """Reseta a transformação da QGraphicsView."""
         self._view.reset_view()
-        # Os sinais da view já atualizam os controles (slider, labels)
+        self._view.centerOn(self._clip_rect.center())
 
     # --- Modificação e Salvamento ---
 
@@ -814,31 +940,7 @@ class GraphicsEditor(QMainWindow):
             DrawingMode.LINE: "line",
             DrawingMode.POLYGON: "polygon",
         }
-        dialog_mode_str = dialog_mode_map.get(self._drawing_mode)
-
-        # Se não estiver em modo de desenho, pergunta qual forma criar
-        if dialog_mode_str is None:
-            items = ("Ponto", "Linha", "Polígono")
-            item, ok = QInputDialog.getItem(
-                self,
-                "Selecionar Forma",
-                "Qual forma deseja adicionar?",
-                items,
-                0,
-                False,
-            )
-            if ok and item:
-                dialog_mode_str = {
-                    "Ponto": "point",
-                    "Linha": "line",
-                    "Polígono": "polygon",
-                }.get(item)
-            else:
-                return  # Cancelou
-
-        if not dialog_mode_str:
-            return
-
+        dialog_mode_str = dialog_mode_map.get(self._drawing_mode, "polygon")
         dialog = CoordinateInputDialog(self, mode=dialog_mode_str)
         dialog.set_initial_color(self._current_draw_color)
 
@@ -847,7 +949,6 @@ class GraphicsEditor(QMainWindow):
                 result_data = dialog.get_validated_data()  # Pega dados já validados
                 if result_data:
                     self._add_item_from_validated_data(result_data, dialog_mode_str)
-                    self._mark_as_modified()
             except ValueError as e:  # Erros durante a criação do objeto final
                 QMessageBox.warning(
                     self,
@@ -884,11 +985,14 @@ class GraphicsEditor(QMainWindow):
                 data_object = Line(start_pt, end_pt, color=color)
             elif dialog_mode_str == "polygon":
                 is_open = result_data.get("is_open", False)
+                is_filled = result_data.get("is_filled", False)  # Get fill status
                 min_pts = 2 if is_open else 3
                 if len(coords) < min_pts:
                     raise ValueError(f"Pontos insuficientes ({len(coords)}/{min_pts}).")
                 poly_pts = [Point(x, y, color=color) for x, y in coords]
-                data_object = Polygon(poly_pts, is_open, color=color)
+                data_object = Polygon(
+                    poly_pts, is_open, color=color, is_filled=is_filled
+                )
 
             if data_object:
                 self._add_data_object_to_scene(data_object)
@@ -904,17 +1008,20 @@ class GraphicsEditor(QMainWindow):
     def _open_transformation_dialog(self) -> None:
         """Abre diálogo para aplicar transformações ao item selecionado."""
         selected_items = self._scene.selectedItems()
+        selected_items = [
+            item for item in selected_items if item is not self._clip_rect_item
+        ]
+
         if len(selected_items) != 1:
             QMessageBox.warning(
                 self,
                 "Seleção Inválida",
-                "Selecione exatamente UM objeto para transformar.",
+                "Selecione exatamente UM objeto (Ponto, Linha ou Polígono) para transformar.",
             )
             return
 
         graphics_item = selected_items[0]
-        data_object = graphics_item.data(0)  # Recupera DataObject associado
-
+        data_object = graphics_item.data(0)
         if not isinstance(data_object, (Point, Line, Polygon)):
             type_name = type(data_object).__name__ if data_object else "Nenhum"
             QMessageBox.critical(
@@ -940,28 +1047,38 @@ class GraphicsEditor(QMainWindow):
             )
             return
 
-        # Find the corresponding graphics item
         graphics_item = self._find_graphics_item_for_object(transformed_data_object)
         if not graphics_item:
             print(
                 f"AVISO: Item gráfico não encontrado para {transformed_data_object} após transformação."
             )
-            QMessageBox.warning(
-                self,
-                "Erro de Atualização",
-                "Não foi possível encontrar o item gráfico correspondente na cena.",
-            )
             return
 
         try:
+            if not graphics_item.scene():
+                print(
+                    f"AVISO: Item {graphics_item} encontrado, mas não está mais na cena."
+                )
+                return
+
+            # --- RE-CLIPPING LOGIC (Optional) ---
+            # If we wanted to re-clip after transformation:
+            # 1. Apply clipping to transformed_data_object
+            # 2. If fully clipped -> remove graphics_item from scene
+            # 3. If partially clipped -> update graphics_item geometry with *newly clipped* data
+            # 4. If still fully visible -> update graphics_item geometry with transformed data
+            # For this assignment, we skip re-clipping and just update geometry.
+
+            # Update graphics item directly with transformed data
             graphics_item.prepareGeometryChange()  # Notifica mudança iminente
             self._update_graphics_item_geometry(graphics_item, transformed_data_object)
             self._apply_style_to_item(
                 graphics_item, transformed_data_object
             )  # Garante cor/estilo
-            # Scene update might be sufficient if geometry change is detected
-            self._scene.update(graphics_item.boundingRect())  # Update area
-            # self._view.viewport().update() # Force viewport redraw if needed
+
+            graphics_item.update()
+            self._scene.update(graphics_item.boundingRect())
+
             self._mark_as_modified()
         except Exception as e:
             QMessageBox.critical(
@@ -979,6 +1096,8 @@ class GraphicsEditor(QMainWindow):
             return None
         # Itera sobre todos os itens na cena
         for item in self._scene.items():
+            if item is self._clip_rect_item:
+                continue
             # Compara a identidade do objeto de dados associado (chave 0)
             if item.data(0) is data_obj:
                 return item
@@ -988,7 +1107,10 @@ class GraphicsEditor(QMainWindow):
         """Atualiza a geometria do item gráfico com base no DataObject."""
         # Usa isinstance para garantir tipo correto do item e dos dados
         if isinstance(data, Point) and isinstance(item, QGraphicsEllipseItem):
-            size, offset = 6.0, 3.0  # Consistente com point.py
+            size, offset = (
+                data.GRAPHICS_SIZE,
+                data.GRAPHICS_SIZE / 2.0,
+            )
             new_rect = QRectF(data.x - offset, data.y - offset, size, size)
             if item.rect() != new_rect:
                 item.setRect(new_rect)
@@ -998,7 +1120,10 @@ class GraphicsEditor(QMainWindow):
                 item.setLine(new_line)
         elif isinstance(data, Polygon) and isinstance(item, QGraphicsPolygonItem):
             new_polygon_qf = QPolygonF([p.to_qpointf() for p in data.points])
-            if item.polygon() != new_polygon_qf:
+            if item.polygon().size() != new_polygon_qf.size() or any(
+                abs(p1.x() - p2.x()) > 1e-6 or abs(p1.y() - p2.y()) > 1e-6
+                for p1, p2 in zip(item.polygon(), new_polygon_qf)
+            ):
                 item.setPolygon(new_polygon_qf)
         else:
             print(
@@ -1023,25 +1148,33 @@ class GraphicsEditor(QMainWindow):
             pen = QPen(color, 1)
             brush = QBrush(color)
         elif isinstance(data, Line) and isinstance(item, QGraphicsLineItem):
-            pen = QPen(color, 2)  # Espessura padrão
+            pen = QPen(color, data.GRAPHICS_WIDTH)
         elif isinstance(data, Polygon) and isinstance(item, QGraphicsPolygonItem):
-            pen = QPen(color, 2)
+            pen = QPen(color, data.GRAPHICS_BORDER_WIDTH)
             brush = QBrush()  # Começa como NoBrush
             if data.is_open:
                 pen.setStyle(Qt.DashLine)
                 brush.setStyle(Qt.NoBrush)
             else:  # Fechado
                 pen.setStyle(Qt.SolidLine)
-                brush.setStyle(Qt.SolidPattern)
-                fill_color = QColor(color)
-                fill_color.setAlphaF(0.35)  # Preenchimento semi-transparente
-                brush.setColor(fill_color)
+                if data.is_filled:
+                    brush.setStyle(Qt.SolidPattern)
+                    fill_color = QColor(color)
+                    fill_color.setAlphaF(data.GRAPHICS_FILL_ALPHA)
+                    brush.setColor(fill_color)
+                else:
+                    brush.setStyle(Qt.NoBrush)
 
         # Aplica apenas se mudou para evitar updates desnecessários
-        if pen is not None and item.pen() != pen:
-            item.setPen(pen)
-        if brush is not None and item.brush() != brush:
-            item.setBrush(brush)
+        current_pen = getattr(item, "pen", lambda: None)()
+        current_brush = getattr(item, "brush", lambda: None)()
+
+        if pen is not None and (current_pen is None or current_pen != pen):
+            if hasattr(item, "setPen"):
+                item.setPen(pen)
+        if brush is not None and (current_brush is None or current_brush != brush):
+            if hasattr(item, "setBrush"):
+                item.setBrush(brush)
 
     # --- Importação/Exportação OBJ ---
 
@@ -1097,6 +1230,7 @@ class GraphicsEditor(QMainWindow):
         # Adiciona objetos à cena
         creation_errors = []
         num_added = 0
+        num_clipped_out = 0
         if not parsed_objects and not mtl_warnings and not obj_warnings:
             msg = f"Nenhum objeto geométrico (v, l, f, p) ou material válido encontrado em '{os.path.basename(obj_filepath)}'."
             if mtl_filename_relative and not mtl_filepath_full:
@@ -1105,13 +1239,17 @@ class GraphicsEditor(QMainWindow):
             self._set_status_message("Carregamento concluído (sem geometria).")
         else:
             for data_obj in parsed_objects:
-                try:
-                    self._add_data_object_to_scene(data_obj)
+                item_count_before = len(
+                    [i for i in self._scene.items() if i is not self._clip_rect_item]
+                )
+                self._add_data_object_to_scene(data_obj)
+                item_count_after = len(
+                    [i for i in self._scene.items() if i is not self._clip_rect_item]
+                )
+                if item_count_after > item_count_before:
                     num_added += 1
-                except Exception as e:
-                    creation_errors.append(
-                        f"Erro ao criar item para {type(data_obj).__name__}: {e}"
-                    )
+                elif not isinstance(data_obj, Point):
+                    num_clipped_out += 1
 
             self._scene.update()
             # Reset view já feito em _clear_scene_confirmed se aplicável
@@ -1119,6 +1257,9 @@ class GraphicsEditor(QMainWindow):
             # Relatório final
             all_warnings = mtl_warnings + obj_warnings + creation_errors
             final_message = f"Carregado: {num_added} objeto(s) de '{os.path.basename(obj_filepath)}'."
+            if num_clipped_out > 0:
+                final_message += f" ({num_clipped_out} fora da viewport)"
+
             if all_warnings:
                 formatted_warnings = "- " + "\n- ".join(all_warnings)
                 QMessageBox.warning(
@@ -1127,8 +1268,6 @@ class GraphicsEditor(QMainWindow):
                     f"{final_message}\n\nAvisos/Erros:\n{formatted_warnings}",
                 )
                 final_message += " (com avisos)"
-            # else:
-            # QMessageBox.information(self, "Carregamento Concluído", final_message) # Menos popups
 
             self._set_status_message(final_message)
 
@@ -1191,16 +1330,24 @@ class GraphicsEditor(QMainWindow):
         scene_data_objects: List[DataObject] = []
         for item in self._scene.items():
             # Ignora itens temporários
-            if item is self._temp_line_item or item is self._temp_polygon_path:
+            if (
+                item is self._temp_line_item
+                or item is self._temp_polygon_path
+                or item is self._clip_rect_item
+            ):
                 continue
             data = item.data(0)
             if isinstance(data, (Point, Line, Polygon)):
                 scene_data_objects.append(data)
 
         if not scene_data_objects:
-            QMessageBox.information(self, "Nada para Salvar", "A cena está vazia.")
+            QMessageBox.information(
+                self, "Nada para Salvar", "A cena (dentro da viewport) está vazia."
+            )
             self._set_status_message("Nada para salvar.")
-            return False
+            # Technically correct to return True as saving an empty file is not an error
+            # but maybe False is better user feedback? Let's return True.
+            return True  # Saving an empty scene is successful
 
         # Gera dados OBJ/MTL
         mtl_filename = os.path.basename(base_filepath) + ".mtl"
@@ -1241,6 +1388,20 @@ class GraphicsEditor(QMainWindow):
                 f"Falha ao escrever arquivo(s) para '{os.path.basename(base_filepath)}'."
             )
             return False
+
+    def _set_line_clipper(self, algorithm: LineClippingAlgorithm):
+        """Sets the line clipping algorithm."""
+        self._selected_line_clipper = algorithm
+        algo_name = (
+            "Cohen-Sutherland"
+            if algorithm == LineClippingAlgorithm.COHEN_SUTHERLAND
+            else "Liang-Barsky"
+        )
+        self._set_status_message(f"Clipping de linha: {algo_name}", 2000)
+
+    def _toggle_viewport_visibility(self, checked: bool):
+        """Shows or hides the visual viewport rectangle."""
+        self._clip_rect_item.setVisible(checked)
 
     # --- Evento de Fechamento ---
 

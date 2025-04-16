@@ -15,7 +15,11 @@ class Polygon:
     GRAPHICS_FILL_ALPHA = 0.35  # Opacidade do preenchimento (0.0 a 1.0)
 
     def __init__(
-        self, points: List[Point], is_open: bool = False, color: Optional[QColor] = None
+        self,
+        points: List[Point],
+        is_open: bool = False,
+        color: Optional[QColor] = None,
+        is_filled: bool = False,  # Added: Fill status
     ):
         """
         Inicializa um polígono ou polilinha.
@@ -40,6 +44,7 @@ class Polygon:
 
         self.points: List[Point] = points
         self.is_open: bool = is_open
+        self.is_filled: bool = is_filled if not is_open else False
         self.color: QColor = (
             color if isinstance(color, QColor) and color.isValid() else QColor(Qt.black)
         )
@@ -52,17 +57,22 @@ class Polygon:
 
         # Aparência (Caneta e Pincel)
         pen = QPen(self.color, self.GRAPHICS_BORDER_WIDTH)
-        brush = QBrush()  # Padrão é NoBrush
+        brush = QBrush()
 
         if self.is_open:  # Polilinha
             pen.setStyle(Qt.DashLine)
             brush.setStyle(Qt.NoBrush)
         else:  # Polígono Fechado
             pen.setStyle(Qt.SolidLine)
-            brush.setStyle(Qt.SolidPattern)
-            fill_color = QColor(self.color)
-            fill_color.setAlphaF(self.GRAPHICS_FILL_ALPHA)  # Aplica transparência
-            brush.setColor(fill_color)
+            if self.is_filled:
+                brush.setStyle(Qt.SolidPattern)
+                fill_color = QColor(self.color)
+                fill_color.setAlphaF(self.GRAPHICS_FILL_ALPHA)  # Aplica transparência
+                brush.setColor(fill_color)
+            else:
+                brush.setStyle(
+                    Qt.NoBrush
+                )  # Explicitly NoBrush if closed but not filled
 
         polygon_item.setPen(pen)
         polygon_item.setBrush(brush)
@@ -90,6 +100,10 @@ class Polygon:
 
     def __repr__(self) -> str:
         """Representação textual."""
-        tipo = "Polygon(open)" if self.is_open else "Polygon(closed)"
+        tipo = (
+            "Polygon(open)"
+            if self.is_open
+            else f"Polygon(closed, filled={self.is_filled})"
+        )
         points_str = ", ".join(repr(p) for p in self.points)
         return f"{tipo}[{points_str}], color={self.color.name()}"
