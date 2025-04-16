@@ -1,4 +1,4 @@
-# graphics_editor/transformations.py
+# graphics_editor/utils/transformations.py
 import numpy as np
 import math
 from typing import List, Tuple

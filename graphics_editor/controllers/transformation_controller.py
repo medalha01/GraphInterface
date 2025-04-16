@@ -10,8 +10,7 @@ from ..models.point import Point
 from ..models.line import Line
 from ..models.polygon import Polygon
 from ..dialogs.transformation_dialog import TransformationDialog
-from .. import transformations as tf  # Módulo com funções de matriz
-
+from ..utils import transformations as tf  # Módulo com funções de matriz
 # Alias para tipos de dados transformáveis
 TransformableObject = Union[Point, Line, Polygon]
 

@@ -45,7 +45,7 @@ class CoordinateInputDialog(QDialog):
         self._double_validator.setLocale(QLocale())
 
         # Ícones
-        self._icon_base_path = os.path.join(os.path.dirname(__file__), "..", "icons")
+        self._icon_base_path = os.path.join(os.path.dirname(__file__), "..","resources", "icons")
 
         self._validated_data: Optional[Dict[str, Any]] = (
             None  # Armazena dados validados no OK

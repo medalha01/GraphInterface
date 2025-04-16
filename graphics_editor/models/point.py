@@ -39,9 +39,9 @@ class Point:
 
         # Flags para interação
         point_item.setFlag(QGraphicsItem.ItemIsSelectable)
-        point_item.setFlag(
-            QGraphicsItem.ItemIsMovable
-        )  # Permite mover com ferramentas de seleção
+        # point_item.setFlag(
+        #    QGraphicsItem.ItemIsMovable
+        # )  # Permite mover com ferramentas de seleção
 
         # Associa este objeto de dados ao item gráfico (chave 0)
         point_item.setData(0, self)

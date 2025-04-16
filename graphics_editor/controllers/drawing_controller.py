@@ -1,4 +1,4 @@
-# graphics_editor/drawing_controller.py
+# graphics_editor/controllers/drawing_controller.py
 from PyQt5.QtCore import Qt
 from PyQt5.QtCore import QObject, pyqtSignal, QPointF, Qt
 from PyQt5.QtGui import QPainterPath, QPen, QColor, QPolygonF
@@ -11,10 +11,10 @@ from PyQt5.QtWidgets import (
 from typing import List, Optional, Tuple, Union
 
 # Importações relativas dentro do pacote
-from .state_manager import EditorStateManager, DrawingMode
-from .models.point import Point
-from .models.line import Line
-from .models.polygon import Polygon
+from ..state_manager import EditorStateManager, DrawingMode
+from ..models.point import Point
+from ..models.line import Line
+from ..models.polygon import Polygon
 
 # Alias para tipos de dados dos modelos
 DataObject = Union[Point, Line, Polygon]

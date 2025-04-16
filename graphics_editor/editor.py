@@ -40,7 +40,7 @@ from PyQt5.QtGui import (
 from PyQt5.QtWidgets import QApplication  # Import QApplication for processEvents
 
 # Importações relativas dentro do pacote
-from .view import GraphicsView
+from .view.main_view import GraphicsView
 from .models.point import Point
 from .models.line import Line
 from .models.polygon import Polygon
@@ -51,11 +51,11 @@ from .controllers.transformation_controller import (
 )  
 from .io_handler import IOHandler  
 from .object_manager import ObjectManager  
-from . import clipping as clp  # Import clipping module
+from .utils import clipping as clp  # Import clipping module
 
 # Importações dos novos módulos
 from .state_manager import EditorStateManager, DrawingMode, LineClippingAlgorithm
-from .drawing_controller import DrawingController
+from .controllers.drawing_controller import DrawingController
 from .ui_manager import UIManager
 
 # Alias para tipos de dados dos modelos

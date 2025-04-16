@@ -1,4 +1,5 @@
-# graphics_editor/view.py
+# graphics_editor/view/main_view.py
+
 from PyQt5.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsItem
 from PyQt5.QtCore import Qt, QPoint, QPointF, pyqtSignal, QRectF, QSize
 from PyQt5.QtGui import (

@@ -33,7 +33,7 @@ class UIManager:
     def __init__(self, main_window: QMainWindow, state_manager):
         self.window = main_window
         self.state_manager = state_manager
-        self._icon_base_path = os.path.join(os.path.dirname(__file__), "icons")
+        self._icon_base_path = os.path.join(os.path.dirname(__file__),"resources", "icons")
 
         # Referências aos widgets da UI que precisam ser atualizados
         self.toolbar: Optional[QToolBar] = None

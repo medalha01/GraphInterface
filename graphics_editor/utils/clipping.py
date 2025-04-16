@@ -1,4 +1,4 @@
-# graphics_editor/clipping.py
+# graphics_editor/utils/clipping.py
 import math
 from typing import List, Tuple, Optional, Union
 
