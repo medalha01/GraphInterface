@@ -45,12 +45,12 @@ from .models.point import Point
 from .models.line import Line
 from .models.polygon import Polygon
 from .dialogs.coordinates_input import CoordinateInputDialog
-from .dialogs.transformation_dialog import TransformationDialog  
+from .dialogs.transformation_dialog import TransformationDialog
 from .controllers.transformation_controller import (
     TransformationController,
-)  
-from .io_handler import IOHandler  
-from .object_manager import ObjectManager  
+)
+from .io_handler import IOHandler
+from .object_manager import ObjectManager
 from .utils import clipping as clp  # Import clipping module
 
 # Importações dos novos módulos
@@ -374,17 +374,7 @@ class GraphicsEditor(QMainWindow):
         # A view emitirá sinais scale_changed/rotation_changed que atualizarão a UI
 
     # --- Gerenciamento de Objetos na Cena Final ---
-
-    def _get_clip_rect_tuple(self) -> clp.ClipRect:
-        """Obtém a tupla de clip do StateManager."""
-        rect = self._state_manager.clip_rect()
-        return (rect.left(), rect.top(), rect.right(), rect.bottom())
-
-    def _add_data_object_to_scene(self, data_object: object):
-        """
-        Recebe um objeto finalizado do DrawingController ou de diálogos,
-        aplica clipping e adiciona à cena.
-        """
+    def _clip_data_object(self, data_object: DataObject) -> Optional[DataObject]:
         clipped_data_object: Optional[DataObject] = None
         clip_rect_tuple = self._get_clip_rect_tuple()
         clipper_algo = self._state_manager.selected_line_clipper()
@@ -395,6 +385,7 @@ class GraphicsEditor(QMainWindow):
                     data_object.get_coords(), clip_rect_tuple
                 )
                 if clipped_coords:
+                    # Create a new Point, retaining original color
                     clipped_data_object = Point(
                         clipped_coords[0], clipped_coords[1], data_object.color
                     )
@@ -411,9 +402,7 @@ class GraphicsEditor(QMainWindow):
                 )
                 if clipped_segment:
                     p1, p2 = clipped_segment
-                    start_pt = Point(
-                        p1[0], p1[1], data_object.start.color
-                    )  # Mantém cor original
+                    start_pt = Point(p1[0], p1[1], data_object.start.color)
                     end_pt = Point(p2[0], p2[1], data_object.end.color)
                     clipped_data_object = Line(start_pt, end_pt, data_object.color)
             elif isinstance(data_object, Polygon):
@@ -433,20 +422,40 @@ class GraphicsEditor(QMainWindow):
                         is_filled=data_object.is_filled,
                     )
 
-            if clipped_data_object:
-                graphics_item = clipped_data_object.create_graphics_item()
-                graphics_item.setData(0, clipped_data_object)  # Associa dado ao item
-                self._scene.addItem(graphics_item)
-                self._state_manager.mark_as_modified()  # Marca como modificado
-            # else: O objeto foi completamente clipado, não adiciona nada
+            return clipped_data_object
 
         except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Erro ao Adicionar/Clipar Item",
-                f"Não foi possível clipar ou criar item gráfico para {type(data_object).__name__}: {e}",
+            print(f"Erro durante o clipping de {type(data_object).__name__}: {e}")
+            self._set_status_message(
+                f"Aviso: Erro ao clipar {type(data_object).__name__}.", 3000
             )
-            print(f"Erro detalhes: {e}")
+            return None
+
+    def _get_clip_rect_tuple(self) -> clp.ClipRect:
+        """Obtém a tupla de clip do StateManager."""
+        rect = self._state_manager.clip_rect()
+        return (rect.left(), rect.top(), rect.right(), rect.bottom())
+
+    def _add_data_object_to_scene(self, data_object: DataObject):
+        """
+        Recebe um objeto finalizado, aplica clipping e adiciona à cena.
+
+        """
+        clipped_data_object = self._clip_data_object(data_object)
+
+        if clipped_data_object:
+            try:
+                graphics_item = clipped_data_object.create_graphics_item()
+                graphics_item.setData(0, clipped_data_object)
+                self._scene.addItem(graphics_item)
+                self._state_manager.mark_as_modified()  # Marca como modificado
+            except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    "Erro ao Criar Item Gráfico",
+                    f"Não foi possível criar item gráfico para {type(clipped_data_object).__name__} pós-clip: {e}",
+                )
+                print(f"Erro detalhes criação: {e}")
 
     def _delete_selected_items(self):
         """Remove os itens selecionados da cena."""
@@ -492,12 +501,11 @@ class GraphicsEditor(QMainWindow):
         # Cancela qualquer desenho em progresso antes de perguntar
         self._drawing_controller.cancel_current_drawing()
         if self._check_unsaved_changes("limpar a cena"):
-            self._clear_scene_confirmed() # Chama a limpeza real se confirmado
-
+            self._clear_scene_confirmed()  # Chama a limpeza real se confirmado
 
     def _clear_scene_confirmed(self):
         """Limpa todos os itens da cena (exceto viewport) e reseta estado."""
-        self._drawing_controller.cancel_current_drawing() # Cancela desenho pendente
+        self._drawing_controller.cancel_current_drawing()  # Cancela desenho pendente
         self._scene.clearSelection()
         items_to_remove = [
             item for item in self._scene.items() if item is not self._clip_rect_item
@@ -506,11 +514,12 @@ class GraphicsEditor(QMainWindow):
             self._scene.removeItem(item)
 
         self._scene.update()
-        self._reset_view() # Reseta zoom/pan/rotação
+        self._reset_view()  # Reseta zoom/pan/rotação
         self._state_manager.mark_as_saved()
         self._state_manager.set_current_filepath(None)
         # Título da janela será atualizado via sinais do state_manager
         self._set_status_message("Nova cena criada.", 2000)
+
     def _select_drawing_color(self):
         """Abre diálogo para selecionar a cor de desenho."""
         initial_color = self._state_manager.draw_color()
@@ -664,8 +673,11 @@ class GraphicsEditor(QMainWindow):
         self._transformation_controller.request_transformation(data_object)
         # O controlador emitirá 'object_transformed' se OK
 
-    def _handle_object_transformed(self, transformed_data_object: object):
-        """Atualiza o item gráfico correspondente após a transformação (Slot)."""
+    def _handle_object_transformed(self, transformed_data_object: DataObject):
+        """
+        Atualiza o item gráfico correspondente após a transformação,
+        incluindo re-clipping. (Slot)
+        """
         if not isinstance(transformed_data_object, (Point, Line, Polygon)):
             print(
                 f"AVISO: Sinal object_transformed com tipo inesperado: {type(transformed_data_object)}"
@@ -675,44 +687,45 @@ class GraphicsEditor(QMainWindow):
         graphics_item = self._find_graphics_item_for_object(transformed_data_object)
         if not graphics_item:
             print(
-                f"AVISO: Item gráfico não encontrado para {transformed_data_object} após transformação."
+                f"AVISO: Item gráfico não encontrado para {transformed_data_object} após transformação (antes do clip)."
             )
-            # Poderia tentar recriar o item? Ou é um erro? Por ora, apenas avisa.
             return
 
-        try:
-            if not graphics_item.scene():
-                print(
-                    f"AVISO: Item {graphics_item} encontrado, mas não está mais na cena."
-                )
-                return
-
-            # --- Atualização da Geometria e Estilo ---
-            # O TransformationController modificou o DataObject. Agora atualizamos
-            # o QGraphicsItem para refletir essas mudanças.
-            # Re-clipping *não* está sendo feito aqui. O objeto transformado pode
-            # agora estar (parcialmente) fora da viewport.
-
-            graphics_item.prepareGeometryChange()  # Notifica mudança iminente
-            self._update_graphics_item_geometry(graphics_item, transformed_data_object)
-            self._apply_style_to_item(
-                graphics_item, transformed_data_object
-            )  # Garante cor/estilo
-
-            graphics_item.update()  # Redesenha o item específico
-            self._scene.update(
-                graphics_item.boundingRect()
-            )  # Atualiza área antiga/nova
-
-            self._state_manager.mark_as_modified()
-
-        except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Erro ao Atualizar Gráfico",
-                f"Falha ao atualizar item {type(graphics_item).__name__}: {e}",
+        if not graphics_item.scene():
+            print(
+                f"AVISO: Item {graphics_item} encontrado, mas não está mais na cena (antes do clip)."
             )
-            print(f"Erro detalhes: {e}")
+            return
+
+        clipped_data_object = self._clip_data_object(transformed_data_object)
+
+        if clipped_data_object is None:
+            self._scene.removeItem(graphics_item)
+            self._set_status_message(
+                "Objeto movido/transformado fora da viewport.", 2000
+            )
+            self._state_manager.mark_as_modified()
+        else:
+            try:
+                graphics_item.prepareGeometryChange()  # Notifica mudança iminente
+
+                graphics_item.setData(0, clipped_data_object)
+
+                self._update_graphics_item_geometry(graphics_item, clipped_data_object)
+                self._apply_style_to_item(graphics_item, clipped_data_object)
+
+                graphics_item.update()
+                self._scene.update(graphics_item.sceneBoundingRect())
+
+                self._state_manager.mark_as_modified()
+
+            except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    "Erro ao Atualizar Gráfico Pós-Transformação",
+                    f"Falha ao atualizar item {type(graphics_item).__name__} após clipping: {e}",
+                )
+                print(f"Erro detalhes atualização pós-clip: {e}")
 
     def _find_graphics_item_for_object(
         self, data_obj: DataObject
