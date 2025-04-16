@@ -4,13 +4,11 @@ import os
 import numpy as np
 from enum import Enum, auto
 from typing import List, Optional, Tuple, Dict, Union, Any
-
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QMainWindow,
     QGraphicsScene,
-    QToolBar,
     QAction,
-    QActionGroup,
     QDialog,
     QMessageBox,
     QGraphicsView,
@@ -24,16 +22,6 @@ from PyQt5.QtWidgets import (
     QGraphicsItem,
     QFileDialog,
     QMenu,
-    QLabel,
-    QStatusBar,
-    QSlider,
-    QApplication,
-    QSizePolicy,
-    QRadioButton,
-    QWidgetAction,
-    QWidget,
-    QVBoxLayout,
-    QGroupBox,
     QGraphicsRectItem,
 )
 from PyQt5.QtCore import QPointF, Qt, pyqtSignal, QSize, QLineF, QRectF, QTimer, QLocale
@@ -49,124 +37,92 @@ from PyQt5.QtGui import (
     QTransform,
     QPainter,
 )
+from PyQt5.QtWidgets import QApplication  # Import QApplication for processEvents
 
 # Importações relativas dentro do pacote
-from .view import GraphicsView
+from .view.main_view import GraphicsView
 from .models.point import Point
 from .models.line import Line
 from .models.polygon import Polygon
 from .dialogs.coordinates_input import CoordinateInputDialog
-from .dialogs.transformation_dialog import TransformationDialog
-from .controllers.transformation_controller import TransformationController
-from .io_handler import IOHandler
-from .object_manager import ObjectManager
-from . import clipping as clp  # Import clipping module
+from .dialogs.transformation_dialog import TransformationDialog  
+from .controllers.transformation_controller import (
+    TransformationController,
+)  
+from .io_handler import IOHandler  
+from .object_manager import ObjectManager  
+from .utils import clipping as clp  # Import clipping module
+
+# Importações dos novos módulos
+from .state_manager import EditorStateManager, DrawingMode, LineClippingAlgorithm
+from .controllers.drawing_controller import DrawingController
+from .ui_manager import UIManager
 
 # Alias para tipos de dados dos modelos
 DataObject = Union[Point, Line, Polygon]
 
-LineClipperFunc = clp.cohen_sutherland
-
-
-class DrawingMode(Enum):
-    """Modos de interação disponíveis no editor."""
-
-    POINT = auto()
-    LINE = auto()
-    POLYGON = auto()
-    SELECT = auto()
-    PAN = auto()
-
-
-class LineClippingAlgorithm(Enum):
-    """Tipos de algoritmos de clipping de linha."""
-
-    COHEN_SUTHERLAND = auto()
-    LIANG_BARSKY = auto()
-
 
 class GraphicsEditor(QMainWindow):
-    """Janela principal da aplicação para o editor gráfico 2D."""
-
-    # Constantes para o slider de zoom
-    SLIDER_RANGE_MIN = 0
-    SLIDER_RANGE_MAX = 400
-
-    DEFAULT_CLIP_RECT = QRectF(-500.0, -400.0, 1000.0, 800.0)
+    """Janela principal da aplicação para o editor gráfico 2D (Coordenador)."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Editor Gráfico 2D")  # Título inicial
+        self.setWindowTitle("Editor Gráfico 2D - Nova Cena")  # Título inicial
         self.resize(1000, 750)
-
-        # Caminho base para ícones (relativo à localização deste arquivo)
-        self._icon_base_path = os.path.join(os.path.dirname(__file__), "icons")
-
-        # --- Estado Interno ---
-        self._drawing_mode: DrawingMode = DrawingMode.SELECT
-        self._current_line_start: Optional[Point] = None
-        self._current_polygon_points: List[Point] = []
-        self._current_polygon_is_open: bool = False
-        self._current_polygon_is_filled: bool = False  # Added
-        self._current_draw_color: QColor = QColor(Qt.black)
-        self._unsaved_changes: bool = False
-        self._current_filepath: Optional[str] = None  # Caminho do arquivo .obj atual
-        self._selected_line_clipper: LineClippingAlgorithm = (
-            LineClippingAlgorithm.COHEN_SUTHERLAND
-        )
-        self._clip_rect: QRectF = self.DEFAULT_CLIP_RECT
-
-        # --- Itens Gráficos Temporários (Pré-visualização) ---
-        self._temp_line_item: Optional[QGraphicsLineItem] = None
-        self._temp_polygon_path: Optional[QGraphicsPathItem] = None
-        self._temp_item_pen = QPen(Qt.gray, 1, Qt.DashLine)
 
         # --- Componentes Principais ---
         self._scene = QGraphicsScene(self)
-        # Define uma área grande para a cena, permitindo desenho fora da vista inicial
         self._scene.setSceneRect(-10000, -10000, 20000, 20000)
         self._view = GraphicsView(self._scene, self)
         self.setCentralWidget(self._view)
 
-        self._clip_rect_item = QGraphicsRectItem(self._clip_rect)
+        # --- Gerenciadores e Controladores ---
+        # Ordem de inicialização pode ser importante se houver dependências
+        self._state_manager = EditorStateManager(self)
+        self._ui_manager = UIManager(
+            self, self._state_manager
+        )  # UI Manager precisa do state
+        self._drawing_controller = DrawingController(
+            self._scene, self._state_manager, self
+        )
+        self._transformation_controller = TransformationController(self)
+        self._io_handler = IOHandler(self)
+        self._object_manager = ObjectManager()
+
+        # --- Itens Gráficos Especiais (Viewport) ---
+        self._clip_rect_item = QGraphicsRectItem(self._state_manager.clip_rect())
         self._clip_rect_item.setPen(QPen(QColor(0, 0, 255, 100), 1, Qt.DashLine))
         self._clip_rect_item.setBrush(QBrush(Qt.NoBrush))
         self._clip_rect_item.setZValue(-1)
         self._scene.addItem(self._clip_rect_item)
 
-        # --- Controladores e Gerenciadores ---
-        self._transformation_controller = TransformationController(self)
-        self._io_handler = IOHandler(self)
-        self._object_manager = ObjectManager()
+        # --- Configuração da UI (Delegada ao UIManager onde possível) ---
+        self._setup_menu_bar()  # Menu ainda configurado aqui por simplicidade
+        self._ui_manager.setup_toolbar(
+            mode_callback=self._set_drawing_mode,
+            color_callback=self._select_drawing_color,
+            coord_callback=self._open_coordinate_input_dialog,
+            transform_callback=self._open_transformation_dialog,
+            clipper_callback=self._set_line_clipper,
+        )
+        self._ui_manager.setup_status_bar(zoom_callback=self._on_zoom_slider_changed)
 
-        # --- Configuração da UI ---
-        self._setup_menu_bar()
-        self._setup_toolbar()
-        self._setup_status_bar()
+        # --- Conectar Sinais e Slots ---
         self._connect_signals()
-        self._update_view_interaction()
-        self._update_status_bar()
+
+        # --- Estado Inicial da UI ---
+        self._update_view_interaction()  # Define modo de arrasto inicial da view
         # Atualiza controles da view (zoom/rotação) após a inicialização da UI
         QTimer.singleShot(0, self._update_view_controls)
-        self._update_window_title()
+
+    # --- UI Setup (Menus principalmente) ---
 
     def _get_icon(self, name: str) -> QIcon:
-        """Carrega um QIcon do diretório de ícones ou retorna um placeholder."""
-        path = os.path.join(self._icon_base_path, name)
-        if not os.path.exists(path):
-            # print(f"Aviso: Ícone não encontrado em {path}, usando placeholder.")
-            pixmap = QPixmap(24, 24)
-            pixmap.fill(Qt.transparent)
-            painter = QPainter(pixmap)
-            painter.setPen(Qt.red)
-            painter.drawRect(0, 0, 23, 23)
-            painter.drawText(QRectF(0, 0, 24, 24), Qt.AlignCenter, "?")
-            painter.end()
-            return QIcon(pixmap)
-        return QIcon(path)
+        # Reutiliza método do UIManager
+        return self._ui_manager._get_icon(name)
 
     def _setup_menu_bar(self) -> None:
-        """Configura a barra de menus."""
+        """Configura a barra de menus (ainda gerenciado aqui)."""
         menubar = self.menuBar()
 
         # --- Menu Arquivo ---
@@ -176,9 +132,7 @@ class GraphicsEditor(QMainWindow):
         self.new_action.setToolTip("Criar uma nova cena vazia (Ctrl+N)")
         self.new_action.triggered.connect(self._prompt_clear_scene)
         file_menu.addAction(self.new_action)
-
         file_menu.addSeparator()
-
         self.load_obj_action = QAction(
             self._get_icon("open.png"), "&Abrir OBJ...", self
         )
@@ -188,7 +142,6 @@ class GraphicsEditor(QMainWindow):
         )
         self.load_obj_action.triggered.connect(self._prompt_load_obj)
         file_menu.addAction(self.load_obj_action)
-
         self.save_as_action = QAction(
             self._get_icon("save.png"), "Salvar &Como OBJ...", self
         )
@@ -198,9 +151,7 @@ class GraphicsEditor(QMainWindow):
         )
         self.save_as_action.triggered.connect(self._prompt_save_as_obj)
         file_menu.addAction(self.save_as_action)
-
         file_menu.addSeparator()
-
         exit_action = QAction(self._get_icon("exit.png"), "&Sair", self)
         exit_action.setShortcut("Ctrl+Q")
         exit_action.setToolTip("Fechar a aplicação (Ctrl+Q)")
@@ -210,9 +161,7 @@ class GraphicsEditor(QMainWindow):
         # --- Menu Editar ---
         edit_menu = menubar.addMenu("&Editar")
         delete_action = QAction(
-            QIcon.fromTheme(
-                "edit-delete", self._get_icon("delete.png")
-            ),  # Tenta usar ícone do tema
+            QIcon.fromTheme("edit-delete", self._get_icon("delete.png")),
             "&Excluir Selecionado(s)",
             self,
         )
@@ -220,9 +169,7 @@ class GraphicsEditor(QMainWindow):
         delete_action.setToolTip("Excluir os itens selecionados (Delete / Backspace)")
         delete_action.triggered.connect(self._delete_selected_items)
         edit_menu.addAction(delete_action)
-
         edit_menu.addSeparator()
-
         transform_action = QAction(
             self._get_icon("transform.png"), "&Transformar Objeto...", self
         )
@@ -240,539 +187,207 @@ class GraphicsEditor(QMainWindow):
         reset_view_action.setToolTip("Resetar zoom, pan e rotação da vista (Ctrl+R)")
         reset_view_action.triggered.connect(self._reset_view)
         view_menu.addAction(reset_view_action)
-
         view_menu.addSeparator()
-        toggle_viewport_action = QAction(
+        # Guarda referência para poder atualizar estado checkado
+        self._ui_manager.viewport_toggle_action = QAction(
             "Mostrar/Ocultar Viewport", self, checkable=True
         )
-        toggle_viewport_action.setChecked(True)
-        toggle_viewport_action.triggered.connect(self._toggle_viewport_visibility)
-        view_menu.addAction(toggle_viewport_action)
-
-    def _setup_toolbar(self) -> None:
-        """Configura a barra de ferramentas principal."""
-        toolbar = QToolBar("Ferramentas")
-        toolbar.setMovable(False)
-        toolbar.setIconSize(QSize(24, 24))
-        self.addToolBar(Qt.LeftToolBarArea, toolbar)
-
-        self._mode_action_group = QActionGroup(self)
-        self._mode_action_group.setExclusive(True)
-
-        # --- Ações de Modo ---
-        modes = [
-            (
-                DrawingMode.SELECT,
-                "Selecionar",
-                "Selecionar e mover itens (S)",
-                "select.png",
-                "S",
-            ),
-            (DrawingMode.PAN, "Mover Vista", "Mover a vista (Pan) (H)", "pan.png", "H"),
-            (DrawingMode.POINT, "Ponto", "Desenhar pontos (P)", "point.png", "P"),
-            (DrawingMode.LINE, "Linha", "Desenhar linhas (L)", "line.png", "L"),
-            (
-                DrawingMode.POLYGON,
-                "Polígono",
-                "Desenhar polígonos/polilinhas (G)",
-                "polygon.png",
-                "G",
-            ),
-        ]
-        for mode, name, tip, icon_name, shortcut in modes:
-            action = QAction(self._get_icon(icon_name), name, self)
-            action.setToolTip(tip)
-            action.setShortcut(shortcut)
-            action.setCheckable(True)
-            action.setData(mode)  # Armazena o enum DrawingMode
-            action.triggered.connect(self._on_mode_action_triggered)
-            toolbar.addAction(action)
-            self._mode_action_group.addAction(action)
-            if mode == self._drawing_mode:
-                action.setChecked(True)
-
-        toolbar.addSeparator()
-
-        # --- Ação de Cor ---
-        self.color_action = QAction(
-            self._create_color_icon(self._current_draw_color, 24), "Cor", self
+        self._ui_manager.viewport_toggle_action.setChecked(
+            self._clip_rect_item.isVisible()
         )
-        self.color_action.setToolTip("Selecionar cor para novos objetos (C)")
-        self.color_action.setShortcut("C")
-        self.color_action.triggered.connect(self._select_drawing_color)
-        toolbar.addAction(self.color_action)
-
-        toolbar.addSeparator()
-
-        # --- Ação de Coordenadas Manuais ---
-        manual_coord_action = QAction(self._get_icon("coords.png"), "Coords", self)
-        manual_coord_action.setToolTip("Adicionar forma via coordenadas (M)")
-        manual_coord_action.setShortcut("M")
-        manual_coord_action.triggered.connect(self._open_coordinate_input_dialog)
-        toolbar.addAction(manual_coord_action)
-
-        # --- Ação de Transformação (já no menu Editar, redundante?) ---
-        # Mantendo na toolbar por acesso rápido
-        transform_action_tb = QAction(self._get_icon("transform.png"), "Transf.", self)
-        transform_action_tb.setToolTip("Aplicar transformação (Ctrl+T)")
-        # Não definimos shortcut aqui para evitar conflito com menu
-        transform_action_tb.triggered.connect(self._open_transformation_dialog)
-        toolbar.addAction(transform_action_tb)
-
-        toolbar.addSeparator()
-        clipping_group_box = QGroupBox("Clipping Linha")
-        clipping_layout = QVBoxLayout()
-        clipping_layout.setContentsMargins(2, 2, 2, 2)
-        clipping_layout.setSpacing(2)
-
-        self.cs_radio = QRadioButton("Cohen-Suth.")
-        self.lb_radio = QRadioButton("Liang-Barsky")
-        self.cs_radio.setChecked(
-            self._selected_line_clipper == LineClippingAlgorithm.COHEN_SUTHERLAND
+        self._ui_manager.viewport_toggle_action.triggered.connect(
+            self._toggle_viewport_visibility
         )
-        self.lb_radio.setChecked(
-            self._selected_line_clipper == LineClippingAlgorithm.LIANG_BARSKY
-        )
+        view_menu.addAction(self._ui_manager.viewport_toggle_action)
 
-        self.cs_radio.toggled.connect(
-            lambda: self._set_line_clipper(LineClippingAlgorithm.COHEN_SUTHERLAND)
-        )
-        self.lb_radio.toggled.connect(
-            lambda: self._set_line_clipper(LineClippingAlgorithm.LIANG_BARSKY)
-        )
-
-        clipping_layout.addWidget(self.cs_radio)
-        clipping_layout.addWidget(self.lb_radio)
-        clipping_group_box.setLayout(clipping_layout)
-        clipping_action = QWidgetAction(self)
-        clipping_action.setDefaultWidget(clipping_group_box)
-        toolbar.addAction(clipping_action)
-
-    def _setup_status_bar(self) -> None:
-        """Configura a barra de status com informações e controles."""
-        self._status_bar = QStatusBar(self)
-        self.setStatusBar(self._status_bar)
-
-        # Mensagem temporária (à esquerda)
-        self._status_message_label = QLabel("Pronto.")
-        self._status_bar.addWidget(self._status_message_label, 1)  # Expansível
-
-        # --- Widgets Permanentes (à direita) ---
-        # Coordenadas
-        self._status_coords_label = QLabel("X: --- Y: ---")
-        self._status_coords_label.setToolTip("Coordenadas do mouse na cena")
-        self._status_coords_label.setMinimumWidth(160)  # Mais espaço
-        self._status_coords_label.setAlignment(Qt.AlignCenter)
-        self._status_bar.addPermanentWidget(self._status_coords_label)
-
-        # Modo
-        self._status_mode_label = QLabel("Modo: Select")
-        self._status_mode_label.setToolTip("Modo de interação atual")
-        self._status_mode_label.setMinimumWidth(100)
-        self._status_mode_label.setAlignment(Qt.AlignCenter)
-        self._status_bar.addPermanentWidget(self._status_mode_label)
-
-        # Rotação
-        self._status_rotation_label = QLabel("Rot: 0.0°")
-        self._status_rotation_label.setToolTip("Rotação da vista (Shift+Setas)")
-        self._status_rotation_label.setMinimumWidth(80)
-        self._status_rotation_label.setAlignment(Qt.AlignCenter)
-        self._status_bar.addPermanentWidget(self._status_rotation_label)
-
-        # Zoom Label
-        self._zoom_label = QLabel("Zoom: 100%")
-        self._zoom_label.setMinimumWidth(90)
-        self._zoom_label.setAlignment(
-            Qt.AlignRight | Qt.AlignVCenter
-        )  # Alinha à direita
-        self._status_bar.addPermanentWidget(self._zoom_label)
-
-        # Zoom Slider
-        self._zoom_slider = QSlider(Qt.Horizontal)
-        self._zoom_slider.setRange(self.SLIDER_RANGE_MIN, self.SLIDER_RANGE_MAX)
-        self._zoom_slider.setToolTip("Controlar o nível de zoom")
-        self._zoom_slider.setMinimumWidth(100)
-        self._zoom_slider.setMaximumWidth(150)  # Largura máxima
-        self._zoom_slider.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        self._status_bar.addPermanentWidget(self._zoom_slider)
-
-    def _update_status_bar(self) -> None:
-        """Atualiza as informações dinâmicas na barra de status."""
-        # Modo
-        mode_map = {
-            DrawingMode.SELECT: "Seleção",
-            DrawingMode.PAN: "Mover Vista",
-            DrawingMode.POINT: "Ponto",
-            DrawingMode.LINE: "Linha",
-            DrawingMode.POLYGON: "Polígono",
-        }
-        mode_text = f"Modo: {mode_map.get(self._drawing_mode, 'N/D')}"
-        self._status_mode_label.setText(mode_text)
-
-        # Rotação (formatada)
-        rotation_angle = self._view.get_rotation_angle()
-        rotation_text = f"Rot: {QLocale().toString(rotation_angle, 'f', 1)}°"  # Usa locale para formatar
-        self._status_rotation_label.setText(rotation_text)
-
-        # Coordenadas (atualizadas por _update_mouse_coords_status)
-        # Zoom (atualizado por _update_view_controls)
-        # Mensagem (atualizada por ações específicas)
-
-    def _update_mouse_coords_status(self, scene_pos: QPointF):
-        """Atualiza o label de coordenadas na status bar."""
-        locale = QLocale()  # Usa o locale padrão (definido no main.py ou sistema)
-        coord_text = f"X: {locale.toString(scene_pos.x(), 'f', 2)}  Y: {locale.toString(scene_pos.y(), 'f', 2)}"
-        self._status_coords_label.setText(coord_text)
+    # --- Conexão de Sinais e Slots ---
 
     def _connect_signals(self) -> None:
         """Conecta sinais e slots entre os componentes."""
-        # View -> Editor
+
+        # --- View -> Editor (Coordenação) ---
         self._view.scene_left_clicked.connect(self._handle_scene_left_click)
         self._view.scene_right_clicked.connect(self._handle_scene_right_click)
         self._view.scene_mouse_moved.connect(self._handle_scene_mouse_move)
-        self._view.scene_mouse_moved.connect(self._update_mouse_coords_status)
-        self._view.delete_requested.connect(self._delete_selected_items)
-        self._view.rotation_changed.connect(self._update_view_controls)
-        self._view.scale_changed.connect(self._update_view_controls)
+        self._view.delete_requested.connect(
+            self._delete_selected_items
+        )  # Atalho de teclado
+        # View -> UI Manager (Atualização de Status)
+        self._view.scene_mouse_moved.connect(self._ui_manager.update_status_bar_coords)
+        self._view.rotation_changed.connect(
+            self._update_view_controls
+        )  # Atualiza slider e label rot
+        self._view.scale_changed.connect(
+            self._update_view_controls
+        )  # Atualiza slider e label zoom
 
-        # Controller -> Editor
-        # Note: pyqtSignal(object) requires the slot to accept 'object' or a specific type
+        # --- StateManager -> UI Manager (Atualização da UI) ---
+        self._state_manager.drawing_mode_changed.connect(
+            self._ui_manager.update_toolbar_mode_selection
+        )
+        self._state_manager.drawing_mode_changed.connect(
+            self._ui_manager.update_status_bar_mode
+        )
+        self._state_manager.draw_color_changed.connect(
+            self._ui_manager.update_color_button
+        )
+        self._state_manager.unsaved_changes_changed.connect(self._update_window_title)
+        self._state_manager.filepath_changed.connect(self._update_window_title)
+        self._state_manager.line_clipper_changed.connect(
+            self._ui_manager.update_clipper_selection
+        )
+        # Se clip rect for dinâmico, conecte aqui também
+        # self._state_manager.clip_rect_changed.connect(self._update_clip_rect_item)
+
+        # --- StateManager -> Editor (Lógica de Interação) ---
+        self._state_manager.drawing_mode_changed.connect(self._update_view_interaction)
+        self._state_manager.drawing_mode_changed.connect(
+            self._drawing_controller.cancel_current_drawing
+        )  # Cancela desenho ao mudar modo
+
+        # --- DrawingController -> Editor (Adicionar Objeto Finalizado) ---
+        self._drawing_controller.object_ready_to_add.connect(
+            self._add_data_object_to_scene
+        )
+        self._drawing_controller.status_message_requested.connect(
+            self._set_status_message
+        )
+
+        # --- TransformationController -> Editor (Atualizar Objeto Transformado) ---
         self._transformation_controller.object_transformed.connect(
             self._handle_object_transformed
         )
 
-        # Controles UI -> Editor/View
-        self._zoom_slider.valueChanged.connect(self._on_zoom_slider_changed)
-        # Não conectamos scene.changed para evitar updates excessivos
+        # --- Componentes -> UI Manager (Atualização de Status) ---
+        # Zoom slider é conectado diretamente no setup do UIManager
 
-    # --- Slots para Controles da View (Zoom/Rotação) ---
+    # --- Handlers de Eventos da View (Delegam ou Processam) ---
 
-    def _on_zoom_slider_changed(self, value: int) -> None:
-        """Mapeia o valor do slider (logarítmico) para a escala da view."""
-        if self.SLIDER_RANGE_MAX == self.SLIDER_RANGE_MIN:
-            return
+    def _handle_scene_left_click(self, scene_pos: QPointF):
+        """Decide se passa o clique para o DrawingController ou para a View."""
+        mode = self._state_manager.drawing_mode()
+        if mode in [DrawingMode.POINT, DrawingMode.LINE, DrawingMode.POLYGON]:
+            self._drawing_controller.handle_scene_left_click(scene_pos)
+        elif mode == DrawingMode.SELECT:
+            # Deixa a view lidar com a seleção (rubberband)
+            pass  # O clique já foi processado pela view para iniciar a seleção
+        elif mode == DrawingMode.PAN:
+            # Pan é iniciado no press event da view
+            pass
 
-        # Use constants FROM THE VIEW instance
-        view_scale_min = self._view.VIEW_SCALE_MIN
-        view_scale_max = self._view.VIEW_SCALE_MAX
+    def _handle_scene_right_click(self, scene_pos: QPointF):
+        """Decide se passa o clique para o DrawingController."""
+        mode = self._state_manager.drawing_mode()
+        if mode == DrawingMode.POLYGON:
+            self._drawing_controller.handle_scene_right_click(scene_pos)
+        # Outros modos podem ter menu de contexto no futuro
 
-        # Mapeamento Logarítmico Inverso
-        log_min = np.log(view_scale_min)
-        log_max = np.log(view_scale_max)
+    def _handle_scene_mouse_move(self, scene_pos: QPointF):
+        """Passa o movimento para o DrawingController se estiver desenhando."""
+        mode = self._state_manager.drawing_mode()
+        if mode in [DrawingMode.LINE, DrawingMode.POLYGON]:
+            self._drawing_controller.handle_scene_mouse_move(scene_pos)
+        # A atualização das coords no status bar é feita por conexão direta view -> uimanager
 
-        # Check for invalid range after log
-        if log_max <= log_min:
-            return
+    # --- Controle de Modo e Interação ---
 
-        factor = (value - self.SLIDER_RANGE_MIN) / (
-            self.SLIDER_RANGE_MAX - self.SLIDER_RANGE_MIN
-        )
-        target_scale = np.exp(log_min + factor * (log_max - log_min))
+    def _set_drawing_mode(self, mode: DrawingMode):
+        """Define o modo via StateManager."""
+        self._state_manager.set_drawing_mode(mode)
+        # O StateManager emitirá sinal que atualizará a UI e cancelará desenhos
 
-        # Define a escala na view (centraliza na view ao usar o slider)
-        # The view's set_scale will handle clamping using its own constants
-        self._view.set_scale(target_scale, center_on_mouse=False)
-
-    def _update_view_controls(self) -> None:
-        """Atualiza o slider de zoom e labels com base no estado atual da view."""
-        # --- Atualiza Zoom ---
-        current_scale = self._view.get_scale()
-        zoom_percent = current_scale * 100
-        self._zoom_label.setText(
-            f"Zoom: {QLocale().toString(zoom_percent, 'f', 0)}%"
-        )  # Usa locale
-
-        # Use constants FROM THE VIEW instance
-        view_scale_min = self._view.VIEW_SCALE_MIN
-        view_scale_max = self._view.VIEW_SCALE_MAX
-
-        # Mapeia escala (log) de volta para valor do slider (linear)
-        if view_scale_max <= view_scale_min:
-            return
-
-        log_min = np.log(view_scale_min)
-        log_max = np.log(view_scale_max)
-
-        # Check for invalid range after log
-        if log_max <= log_min:
-            return
-
-        # Clampa a escala atual dentro dos limites para evitar erros de log/divisão
-        clamped_scale = max(view_scale_min, min(current_scale, view_scale_max))
-        log_scale = np.log(clamped_scale)
-
-        factor = (log_scale - log_min) / (log_max - log_min)
-        slider_value = int(
-            round(
-                self.SLIDER_RANGE_MIN
-                + factor * (self.SLIDER_RANGE_MAX - self.SLIDER_RANGE_MIN)
-            )
-        )
-
-        # Define valor no slider sem emitir sinal para evitar loop
-        self._zoom_slider.blockSignals(True)
-        self._zoom_slider.setValue(slider_value)
-        self._zoom_slider.blockSignals(False)
-
-        # --- Atualiza outros labels da status bar ---
-        self._update_status_bar()
-
-    # --- Métodos Utilitários de UI ---
-
-    def _create_color_icon(self, color: QColor, size: int = 16) -> QIcon:
-        """Cria um ícone quadrado com a cor especificada."""
-        pixmap = QPixmap(size, size)
-        valid_color = color if color.isValid() else QColor(Qt.black)
-        pixmap.fill(valid_color)
-        painter = QPainter(pixmap)
-        border_color = Qt.gray  # Borda cinza fixa
-        painter.setPen(QPen(border_color, 1))
-        painter.drawRect(0, 0, size - 1, size - 1)
-        painter.end()
-        return QIcon(pixmap)
-
-    def _select_drawing_color(self):
-        """Abre diálogo para selecionar a cor de desenho."""
-        initial_color = (
-            self._current_draw_color if self._current_draw_color.isValid() else Qt.black
-        )
-        new_color = QColorDialog.getColor(
-            initial_color, self, "Selecionar Cor de Desenho"
-        )
-        if new_color.isValid():
-            self._current_draw_color = new_color
-            self.color_action.setIcon(
-                self._create_color_icon(self._current_draw_color, 24)
-            )
-
-    def _set_status_message(self, message: str, timeout: int = 3000):
-        """Exibe uma mensagem na barra de status por um tempo determinado."""
-        self._status_message_label.setText(message)
-        if timeout > 0:
-            QTimer.singleShot(
-                timeout, lambda: self._status_message_label.setText("Pronto.")
-            )
-
-    # --- Gerenciamento de Modo ---
-
-    def _on_mode_action_triggered(self) -> None:
-        """Chamado quando uma ação de modo na toolbar é clicada."""
-        checked_action = self._mode_action_group.checkedAction()
-        if checked_action:
-            new_mode = checked_action.data()
-            if isinstance(new_mode, DrawingMode):
-                self._set_drawing_mode(new_mode)
-
-    def _set_drawing_mode(self, mode: DrawingMode) -> None:
-        """Define o modo de desenho atual e atualiza a UI."""
-        if mode == self._drawing_mode:
-            return
-
-        self._finish_current_drawing(commit=False)  # Cancela desenho em progresso
-        self._drawing_mode = mode
-        self._update_view_interaction()
-        self._update_status_bar()
-
-        # Garante que a ação correta na toolbar esteja marcada
-        for action in self._mode_action_group.actions():
-            if action.data() == mode:
-                if not action.isChecked():
-                    action.setChecked(True)
-                break
-
-    def _update_view_interaction(self) -> None:
-        """Atualiza o cursor e o modo de arrasto da view com base no modo."""
-        if self._drawing_mode == DrawingMode.SELECT:
+    def _update_view_interaction(self):
+        """Atualiza o modo de arrasto da view com base no modo do StateManager."""
+        mode = self._state_manager.drawing_mode()
+        if mode == DrawingMode.SELECT:
             self._view.set_drag_mode(QGraphicsView.RubberBandDrag)
-        elif self._drawing_mode == DrawingMode.PAN:
+        elif mode == DrawingMode.PAN:
             self._view.set_drag_mode(QGraphicsView.ScrollHandDrag)
         else:  # Modos de desenho
             self._view.set_drag_mode(QGraphicsView.NoDrag)
         # O cursor é atualizado dentro de view.set_drag_mode()
 
-    # --- Lógica de Desenho ---
-
-    def _handle_scene_left_click(self, scene_pos: QPointF) -> None:
-        """Processa clique esquerdo na cena."""
-        if self._drawing_mode in [DrawingMode.SELECT, DrawingMode.PAN]:
-            return
-
-        current_point_data = Point(
-            scene_pos.x(), scene_pos.y(), color=self._current_draw_color
+    def _set_line_clipper(self, algorithm: LineClippingAlgorithm):
+        """Define o algoritmo de clipping via StateManager."""
+        self._state_manager.set_selected_line_clipper(algorithm)
+        algo_name = (
+            "Cohen-Sutherland"
+            if algorithm == LineClippingAlgorithm.COHEN_SUTHERLAND
+            else "Liang-Barsky"
         )
+        self._set_status_message(f"Clipping de linha: {algo_name}", 2000)
 
-        if self._drawing_mode == DrawingMode.POINT:
-            self._add_data_object_to_scene(current_point_data)
-        elif self._drawing_mode == DrawingMode.LINE:
-            if self._current_line_start is None:
-                self._current_line_start = current_point_data
-                self._update_line_preview(scene_pos)  # Mostra preview inicial
-            else:
-                # Finaliza a linha
-                if (
-                    current_point_data.get_coords()
-                    == self._current_line_start.get_coords()
-                ):
-                    self._set_status_message(
-                        "Ponto final igual ao inicial. Clique em outro lugar.", 2000
-                    )
-                    return
+    # --- Controle da View (Zoom/Rotação) ---
 
-                line_data = Line(
-                    self._current_line_start,
-                    current_point_data,
-                    color=self._current_draw_color,
-                )
-                self._add_data_object_to_scene(line_data)  # Clipping happens inside
-                self._finish_current_drawing(commit=True)
-
-        elif self._drawing_mode == DrawingMode.POLYGON:
-            if not self._current_polygon_points:
-                type_reply = QMessageBox.question(
-                    self,
-                    "Tipo de Polígono",
-                    "Deseja criar uma Polilinha (ABERTA)?\n\n"
-                    "- Sim: Polilinha (>= 2 pontos).\n"
-                    "- Não: Polígono Fechado (>= 3 pontos).\n\n"
-                    "(Clique com o botão direito para finalizar)",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.No,
-                )
-                self._current_polygon_is_open = type_reply == QMessageBox.Yes
-
-                self._current_polygon_is_filled = False
-                if not self._current_polygon_is_open:
-                    fill_reply = QMessageBox.question(
-                        self,
-                        "Preenchimento",
-                        "Deseja preencher o polígono fechado?",
-                        QMessageBox.Yes | QMessageBox.No,
-                        QMessageBox.No,
-                    )
-                    self._current_polygon_is_filled = fill_reply == QMessageBox.Yes
-
-            # Evita pontos duplicados consecutivos
-            if (
-                self._current_polygon_points
-                and current_point_data.get_coords()
-                == self._current_polygon_points[-1].get_coords()
-            ):
-                self._set_status_message("Ponto duplicado ignorado.", 1500)
-                return
-
-            self._current_polygon_points.append(current_point_data)
-            self._update_polygon_preview(scene_pos)
-
-    def _handle_scene_right_click(self, scene_pos: QPointF) -> None:
-        """Processa clique direito, usado para finalizar polígonos."""
-        if self._drawing_mode == DrawingMode.POLYGON:
-            self._finish_current_drawing(commit=True)
-        # Poderia adicionar um menu de contexto aqui para seleção/pan no futuro
-
-    def _handle_scene_mouse_move(self, scene_pos: QPointF) -> None:
-        """Processa movimento do mouse para pré-visualização."""
-        # Atualiza preview se estiver desenhando
-        if self._drawing_mode == DrawingMode.LINE and self._current_line_start:
-            self._update_line_preview(scene_pos)
-        elif self._drawing_mode == DrawingMode.POLYGON and self._current_polygon_points:
-            self._update_polygon_preview(scene_pos)
-
-    def _update_line_preview(self, current_pos: QPointF):
-        """Atualiza ou cria a linha de pré-visualização."""
-        if not self._current_line_start:
-            return
-        start_qpos = self._current_line_start.to_qpointf()
-
-        if self._temp_line_item is None:
-            self._temp_line_item = QGraphicsLineItem(QLineF(start_qpos, current_pos))
-            self._temp_line_item.setPen(self._temp_item_pen)
-            self._temp_line_item.setZValue(1000)  # Fica por cima
-            self._scene.addItem(self._temp_line_item)
-        else:
-            self._temp_line_item.setLine(QLineF(start_qpos, current_pos))
-
-    def _update_polygon_preview(self, current_pos: QPointF):
-        """Atualiza ou cria o caminho de pré-visualização do polígono."""
-        if not self._current_polygon_points:
+    def _on_zoom_slider_changed(self, value: int):
+        """Mapeia valor do slider para escala da view."""
+        # Lógica de mapeamento logarítmico (igual a antes)
+        min_slider, max_slider = (
+            self._ui_manager.SLIDER_RANGE_MIN,
+            self._ui_manager.SLIDER_RANGE_MAX,
+        )
+        min_scale, max_scale = self._view.VIEW_SCALE_MIN, self._view.VIEW_SCALE_MAX
+        if max_slider == min_slider or max_scale <= min_scale:
             return
 
-        path = QPainterPath()
-        path.moveTo(self._current_polygon_points[0].to_qpointf())
-        for point_data in self._current_polygon_points[1:]:
-            path.lineTo(point_data.to_qpointf())
-        # Linha do último ponto adicionado até o cursor
-        path.lineTo(current_pos)
-        # Não desenha linha de fechamento no preview, simplifica
+        log_min, log_max = np.log(min_scale), np.log(max_scale)
+        if log_max <= log_min:
+            return
 
-        if self._temp_polygon_path is None:
-            self._temp_polygon_path = QGraphicsPathItem()
-            self._temp_polygon_path.setPen(self._temp_item_pen)
-            self._temp_polygon_path.setZValue(1000)
-            self._scene.addItem(self._temp_polygon_path)
+        factor = (value - min_slider) / (max_slider - min_slider)
+        target_scale = np.exp(log_min + factor * (log_max - log_min))
+        self._view.set_scale(
+            target_scale, center_on_mouse=False
+        )  # View emitirá scale_changed
 
-        self._temp_polygon_path.setPath(path)
-
-    def _finish_current_drawing(self, commit: bool = True) -> None:
-        """Finaliza ou cancela a operação de desenho atual (linha/polígono)."""
-        drawing_finished_or_cancelled = False
-        if self._drawing_mode == DrawingMode.LINE and self._current_line_start:
-            # Commit da linha é feito no segundo clique, aqui só cancela
-            self._current_line_start = None
-            drawing_finished_or_cancelled = True
-
-        if self._drawing_mode == DrawingMode.POLYGON and self._current_polygon_points:
-            min_points_needed = 2 if self._current_polygon_is_open else 3
-            can_commit = len(self._current_polygon_points) >= min_points_needed
-
-            if commit and can_commit:
-                # Cria o objeto Polygon final
-                polygon_data = Polygon(
-                    self._current_polygon_points.copy(),
-                    is_open=self._current_polygon_is_open,
-                    color=self._current_draw_color,
-                    is_filled=self._current_polygon_is_filled,
+    def _update_view_controls(self):
+        """Atualiza UI (slider/labels) com base no estado da view."""
+        # Zoom
+        current_scale = self._view.get_scale()
+        min_scale, max_scale = self._view.VIEW_SCALE_MIN, self._view.VIEW_SCALE_MAX
+        min_slider, max_slider = (
+            self._ui_manager.SLIDER_RANGE_MIN,
+            self._ui_manager.SLIDER_RANGE_MAX,
+        )
+        slider_value = min_slider  # Default
+        if max_scale > min_scale and max_slider > min_slider:
+            log_min, log_max = np.log(min_scale), np.log(max_scale)
+            if log_max > log_min:
+                clamped_scale = max(min_scale, min(current_scale, max_scale))
+                log_scale = np.log(clamped_scale)
+                factor = (log_scale - log_min) / (log_max - log_min)
+                slider_value = int(
+                    round(min_slider + factor * (max_slider - min_slider))
                 )
-                self._add_data_object_to_scene(polygon_data)
-            elif commit and not can_commit:
-                # Tentou finalizar sem pontos suficientes
-                QMessageBox.warning(
-                    self,
-                    "Pontos Insuficientes",
-                    f"Não é possível finalizar o polígono {'aberto' if self._current_polygon_is_open else 'fechado'}. "
-                    f"Requer {min_points_needed} pontos (você tem {len(self._current_polygon_points)}). "
-                    "Continue clicando ou cancele mudando de modo.",
-                )
-                return  # Não reseta, permite continuar
 
-            # Reseta estado do polígono (se commit bem sucedido ou cancelamento)
-            self._current_polygon_points = []
-            self._current_polygon_is_open = False
-            self._current_polygon_is_filled = False
-            drawing_finished_or_cancelled = True
+        self._ui_manager.update_status_bar_zoom(current_scale, slider_value)
 
-        if drawing_finished_or_cancelled:
-            self._remove_temp_items()
+        # Rotação
+        rotation_angle = self._view.get_rotation_angle()
+        self._ui_manager.update_status_bar_rotation(rotation_angle)
 
-    def _remove_temp_items(self) -> None:
-        """Remove itens gráficos temporários da cena."""
-        if self._temp_line_item and self._temp_line_item.scene():
-            self._scene.removeItem(self._temp_line_item)
-        self._temp_line_item = None
-        if self._temp_polygon_path and self._temp_polygon_path.scene():
-            self._scene.removeItem(self._temp_polygon_path)
-        self._temp_polygon_path = None
+    def _reset_view(self):
+        """Reseta a transformação da QGraphicsView."""
+        self._view.reset_view()
+        # Centraliza na viewport padrão após resetar
+        self._view.centerOn(self._state_manager.clip_rect().center())
+        # A view emitirá sinais scale_changed/rotation_changed que atualizarão a UI
 
-    # --- Gerenciamento de Objetos e Cena ---
+    # --- Gerenciamento de Objetos na Cena Final ---
 
     def _get_clip_rect_tuple(self) -> clp.ClipRect:
-        rect = self._clip_rect
+        """Obtém a tupla de clip do StateManager."""
+        rect = self._state_manager.clip_rect()
         return (rect.left(), rect.top(), rect.right(), rect.bottom())
 
-    def _add_data_object_to_scene(self, data_object: DataObject):
-        """Cria o QGraphicsItem e o adiciona à cena."""
+    def _add_data_object_to_scene(self, data_object: object):
+        """
+        Recebe um objeto finalizado do DrawingController ou de diálogos,
+        aplica clipping e adiciona à cena.
+        """
         clipped_data_object: Optional[DataObject] = None
         clip_rect_tuple = self._get_clip_rect_tuple()
-        added_item = False
+        clipper_algo = self._state_manager.selected_line_clipper()
 
         try:
             if isinstance(data_object, Point):
@@ -786,8 +401,7 @@ class GraphicsEditor(QMainWindow):
             elif isinstance(data_object, Line):
                 clipper_func = (
                     clp.cohen_sutherland
-                    if self._selected_line_clipper
-                    == LineClippingAlgorithm.COHEN_SUTHERLAND
+                    if clipper_algo == LineClippingAlgorithm.COHEN_SUTHERLAND
                     else clp.liang_barsky
                 )
                 clipped_segment = clipper_func(
@@ -796,17 +410,16 @@ class GraphicsEditor(QMainWindow):
                     clip_rect_tuple,
                 )
                 if clipped_segment:
-                    p1_coords, p2_coords = clipped_segment
+                    p1, p2 = clipped_segment
                     start_pt = Point(
-                        p1_coords[0], p1_coords[1], data_object.start.color
-                    )
-                    end_pt = Point(p2_coords[0], p2_coords[1], data_object.end.color)
+                        p1[0], p1[1], data_object.start.color
+                    )  # Mantém cor original
+                    end_pt = Point(p2[0], p2[1], data_object.end.color)
                     clipped_data_object = Line(start_pt, end_pt, data_object.color)
             elif isinstance(data_object, Polygon):
                 clipped_vertices_coords = clp.sutherland_hodgman(
                     data_object.get_coords(), clip_rect_tuple
                 )
-
                 min_points = 2 if data_object.is_open else 3
                 if len(clipped_vertices_coords) >= min_points:
                     clipped_points = [
@@ -822,10 +435,10 @@ class GraphicsEditor(QMainWindow):
 
             if clipped_data_object:
                 graphics_item = clipped_data_object.create_graphics_item()
-                graphics_item.setData(0, clipped_data_object)
+                graphics_item.setData(0, clipped_data_object)  # Associa dado ao item
                 self._scene.addItem(graphics_item)
-                self._mark_as_modified()
-                added_item = True
+                self._state_manager.mark_as_modified()  # Marca como modificado
+            # else: O objeto foi completamente clipado, não adiciona nada
 
         except Exception as e:
             QMessageBox.critical(
@@ -835,7 +448,7 @@ class GraphicsEditor(QMainWindow):
             )
             print(f"Erro detalhes: {e}")
 
-    def _delete_selected_items(self) -> None:
+    def _delete_selected_items(self):
         """Remove os itens selecionados da cena."""
         selected = self._scene.selectedItems()
         if not selected:
@@ -845,24 +458,20 @@ class GraphicsEditor(QMainWindow):
         items_deleted = 0
         for item in selected:
             if item is self._clip_rect_item:
-                continue
+                continue  # Não exclui viewport
             if item.scene():  # Verifica se ainda está na cena
+                # TODO: Idealmente, deveria remover o DataObject correspondente do ObjectManager também
                 self._scene.removeItem(item)
                 items_deleted += 1
 
         if items_deleted > 0:
             self._scene.update()
-            self._mark_as_modified()
+            self._state_manager.mark_as_modified()
             self._set_status_message(f"{items_deleted} item(ns) excluído(s).", 2000)
 
-    def _prompt_clear_scene(self):
-        """Pergunta ao usuário se deseja limpar a cena."""
-        if self._check_unsaved_changes("limpar a cena"):
-            self._clear_scene_confirmed()
-
-    def _clear_scene_confirmed(self) -> None:
-        """Limpa todos os itens da cena e reseta estado."""
-        self._finish_current_drawing(commit=False)
+    def _clear_scene_confirmed(self):
+        """Limpa todos os itens da cena (exceto viewport) e reseta estado."""
+        self._drawing_controller.cancel_current_drawing()  # Cancela desenho pendente
         self._scene.clearSelection()
         items_to_remove = [
             item for item in self._scene.items() if item is not self._clip_rect_item
@@ -871,45 +480,68 @@ class GraphicsEditor(QMainWindow):
             self._scene.removeItem(item)
 
         self._scene.update()
-        self._reset_view()
-        self._mark_as_saved()
-        self._current_filepath = None
-        self._update_window_title()
+        self._reset_view()  # Reseta zoom/pan/rotação
+        self._state_manager.mark_as_saved()
+        self._state_manager.set_current_filepath(None)
+        # Título da janela será atualizado via sinais do state_manager
         self._set_status_message("Nova cena criada.", 2000)
 
-    def _reset_view(self) -> None:
-        """Reseta a transformação da QGraphicsView."""
-        self._view.reset_view()
-        self._view.centerOn(self._clip_rect.center())
+    # --- Ações e Diálogos ---
+    def _prompt_clear_scene(self):
+        """Pergunta ao usuário se deseja limpar a cena, verificando alterações."""
+        # Cancela qualquer desenho em progresso antes de perguntar
+        self._drawing_controller.cancel_current_drawing()
+        if self._check_unsaved_changes("limpar a cena"):
+            self._clear_scene_confirmed() # Chama a limpeza real se confirmado
 
-    # --- Modificação e Salvamento ---
 
-    def _mark_as_modified(self):
-        """Marca a cena como modificada."""
-        if not self._unsaved_changes:
-            self._unsaved_changes = True
-            self._update_window_title()
+    def _clear_scene_confirmed(self):
+        """Limpa todos os itens da cena (exceto viewport) e reseta estado."""
+        self._drawing_controller.cancel_current_drawing() # Cancela desenho pendente
+        self._scene.clearSelection()
+        items_to_remove = [
+            item for item in self._scene.items() if item is not self._clip_rect_item
+        ]
+        for item in items_to_remove:
+            self._scene.removeItem(item)
 
-    def _mark_as_saved(self):
-        """Marca a cena como salva."""
-        if self._unsaved_changes:
-            self._unsaved_changes = False
-            self._update_window_title()
+        self._scene.update()
+        self._reset_view() # Reseta zoom/pan/rotação
+        self._state_manager.mark_as_saved()
+        self._state_manager.set_current_filepath(None)
+        # Título da janela será atualizado via sinais do state_manager
+        self._set_status_message("Nova cena criada.", 2000)
+    def _select_drawing_color(self):
+        """Abre diálogo para selecionar a cor de desenho."""
+        initial_color = self._state_manager.draw_color()
+        new_color = QColorDialog.getColor(
+            initial_color, self, "Selecionar Cor de Desenho"
+        )
+        if new_color.isValid():
+            self._state_manager.set_draw_color(new_color)  # Atualiza estado central
+            # UI Manager será notificado pelo sinal do state_manager
 
-    def _update_window_title(self):
-        """Atualiza o título da janela (arquivo, estado modificado)."""
+    def _set_status_message(self, message: str, timeout: int = 3000):
+        """Exibe uma mensagem na barra de status."""
+        self._ui_manager.update_status_bar_message(message)
+        if timeout > 0:
+            QTimer.singleShot(
+                timeout, lambda: self._ui_manager.update_status_bar_message("Pronto.")
+            )
+
+    def _update_window_title(self, *args):  # Aceita args extras dos sinais
+        """Atualiza o título da janela com base no estado."""
         title = "Editor Gráfico 2D - "
-        filename = "Nova Cena"
-        if self._current_filepath:
-            filename = os.path.basename(self._current_filepath)
+        filepath = self._state_manager.current_filepath()
+        filename = os.path.basename(filepath) if filepath else "Nova Cena"
         title += filename
-        if self._unsaved_changes:
-            title += " *"  # Indicador de não salvo
+        if self._state_manager.has_unsaved_changes():
+            title += " *"
         self.setWindowTitle(title)
 
     def _check_unsaved_changes(self, action_description: str = "prosseguir") -> bool:
-        """Verifica alterações não salvas e pergunta ao usuário o que fazer."""
-        if not self._unsaved_changes:
+        """Verifica alterações não salvas e pergunta ao usuário."""
+        if not self._state_manager.has_unsaved_changes():
             return True
 
         reply = QMessageBox.warning(
@@ -917,60 +549,57 @@ class GraphicsEditor(QMainWindow):
             "Alterações Não Salvas",
             f"A cena contém alterações não salvas. Deseja salvá-las antes de {action_description}?",
             QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
-            QMessageBox.Save,  # Default é salvar
+            QMessageBox.Save,
         )
 
         if reply == QMessageBox.Save:
-            return (
-                self._save_current_file()
-            )  # Tenta salvar; retorna True se sucesso/cancelado pelo user, False se falha
+            return self._save_current_file()  # Tenta salvar
         elif reply == QMessageBox.Discard:
             return True  # Pode prosseguir
         else:  # reply == QMessageBox.Cancel
             return False  # Não prosseguir
 
-    # --- Diálogos e Interações Externas ---
-
-    def _open_coordinate_input_dialog(self) -> None:
+    def _open_coordinate_input_dialog(self):
         """Abre diálogo para adicionar formas via coordenadas."""
-        self._finish_current_drawing(commit=False)
-
+        self._drawing_controller.cancel_current_drawing()
         dialog_mode_map = {
             DrawingMode.POINT: "point",
             DrawingMode.LINE: "line",
             DrawingMode.POLYGON: "polygon",
         }
-        dialog_mode_str = dialog_mode_map.get(self._drawing_mode, "polygon")
+        dialog_mode_str = dialog_mode_map.get(
+            self._state_manager.drawing_mode(), "polygon"
+        )
         dialog = CoordinateInputDialog(self, mode=dialog_mode_str)
-        dialog.set_initial_color(self._current_draw_color)
+        dialog.set_initial_color(self._state_manager.draw_color())
 
         if dialog.exec_() == QDialog.Accepted:
             try:
-                result_data = dialog.get_validated_data()  # Pega dados já validados
+                result_data = dialog.get_validated_data()
                 if result_data:
+                    # Reutiliza lógica de criação (mas evita duplicação com _add_item_from...)
                     self._add_item_from_validated_data(result_data, dialog_mode_str)
-            except ValueError as e:  # Erros durante a criação do objeto final
+            except ValueError as e:
                 QMessageBox.warning(
                     self,
                     "Erro ao Criar Objeto",
                     f"Não foi possível criar o objeto: {e}",
                 )
-            except Exception as e:  # Outros erros inesperados
+            except Exception as e:
                 QMessageBox.critical(
                     self,
                     "Erro Interno",
                     f"Erro inesperado ao processar dados do diálogo: {e}",
                 )
 
-    def _add_item_from_validated_data(
-        self, result_data: Any, dialog_mode_str: str
-    ) -> None:
-        """Cria e adiciona objeto de dados à cena a partir de dados validados do diálogo."""
+    def _add_item_from_validated_data(self, result_data: Any, dialog_mode_str: str):
+        """Cria objeto a partir de dados validados do diálogo e o adiciona."""
+        # Esta lógica é quase idêntica à validação no diálogo, idealmente seria unificada.
+        # Mas por enquanto, recria o DataObject e chama _add_data_object_to_scene.
         try:
             data_object: Optional[DataObject] = None
             color = result_data.get("color", QColor(Qt.black))
             coords = result_data.get("coords", [])
-
             if not coords:
                 raise ValueError("Coordenadas ausentes.")
 
@@ -979,13 +608,12 @@ class GraphicsEditor(QMainWindow):
             elif dialog_mode_str == "line":
                 if len(coords) < 2:
                     raise ValueError("Coordenadas da linha insuficientes.")
-                # Validação de pontos iguais já feita no diálogo
                 start_pt = Point(coords[0][0], coords[0][1], color=color)
                 end_pt = Point(coords[1][0], coords[1][1], color=color)
                 data_object = Line(start_pt, end_pt, color=color)
             elif dialog_mode_str == "polygon":
                 is_open = result_data.get("is_open", False)
-                is_filled = result_data.get("is_filled", False)  # Get fill status
+                is_filled = result_data.get("is_filled", False)
                 min_pts = 2 if is_open else 3
                 if len(coords) < min_pts:
                     raise ValueError(f"Pontos insuficientes ({len(coords)}/{min_pts}).")
@@ -995,55 +623,52 @@ class GraphicsEditor(QMainWindow):
                 )
 
             if data_object:
-                self._add_data_object_to_scene(data_object)
+                self._add_data_object_to_scene(
+                    data_object
+                )  # Adiciona à cena (com clipping)
             else:
                 raise ValueError(f"Modo de criação desconhecido: {dialog_mode_str}")
 
         except (ValueError, TypeError, IndexError, KeyError) as e:
-            # Captura erros específicos da criação/processamento
-            raise ValueError(
-                f"Erro ao criar item: {e}"
-            )  # Repassa erro para msgbox no chamador
+            raise ValueError(f"Erro ao criar item do diálogo: {e}")  # Repassa erro
 
-    def _open_transformation_dialog(self) -> None:
+    def _open_transformation_dialog(self):
         """Abre diálogo para aplicar transformações ao item selecionado."""
-        selected_items = self._scene.selectedItems()
         selected_items = [
-            item for item in selected_items if item is not self._clip_rect_item
+            item
+            for item in self._scene.selectedItems()
+            if item is not self._clip_rect_item
         ]
 
         if len(selected_items) != 1:
             QMessageBox.warning(
                 self,
                 "Seleção Inválida",
-                "Selecione exatamente UM objeto (Ponto, Linha ou Polígono) para transformar.",
+                "Selecione exatamente UM objeto para transformar.",
             )
             return
 
         graphics_item = selected_items[0]
-        data_object = graphics_item.data(0)
+        data_object = graphics_item.data(0)  # Pega o DataObject associado
         if not isinstance(data_object, (Point, Line, Polygon)):
             type_name = type(data_object).__name__ if data_object else "Nenhum"
             QMessageBox.critical(
                 self,
                 "Erro Interno",
-                f"Item selecionado não tem dados válidos ({type_name}) ou não é transformável.",
+                f"Item selecionado sem dados válidos ({type_name}) ou não transformável.",
             )
             return
 
-        self._finish_current_drawing(commit=False)
-        # Passa o objeto de DADOS para o controlador
+        self._drawing_controller.cancel_current_drawing()
+        # Passa o objeto de DADOS para o controlador de transformação
         self._transformation_controller.request_transformation(data_object)
         # O controlador emitirá 'object_transformed' se OK
 
-    # Slot to handle the transformed object signal from the controller
-    # Needs to accept a generic 'object' due to pyqtSignal limitations
-    def _handle_object_transformed(self, transformed_data_object: object) -> None:
-        """Atualiza o item gráfico correspondente após a transformação."""
-        # Check if the received object is one of our data types
+    def _handle_object_transformed(self, transformed_data_object: object):
+        """Atualiza o item gráfico correspondente após a transformação (Slot)."""
         if not isinstance(transformed_data_object, (Point, Line, Polygon)):
             print(
-                f"AVISO: Sinal object_transformed recebido com tipo inesperado: {type(transformed_data_object)}"
+                f"AVISO: Sinal object_transformed com tipo inesperado: {type(transformed_data_object)}"
             )
             return
 
@@ -1052,6 +677,7 @@ class GraphicsEditor(QMainWindow):
             print(
                 f"AVISO: Item gráfico não encontrado para {transformed_data_object} após transformação."
             )
+            # Poderia tentar recriar o item? Ou é um erro? Por ora, apenas avisa.
             return
 
         try:
@@ -1061,25 +687,25 @@ class GraphicsEditor(QMainWindow):
                 )
                 return
 
-            # --- RE-CLIPPING LOGIC (Optional) ---
-            # If we wanted to re-clip after transformation:
-            # 1. Apply clipping to transformed_data_object
-            # 2. If fully clipped -> remove graphics_item from scene
-            # 3. If partially clipped -> update graphics_item geometry with *newly clipped* data
-            # 4. If still fully visible -> update graphics_item geometry with transformed data
-            # For this assignment, we skip re-clipping and just update geometry.
+            # --- Atualização da Geometria e Estilo ---
+            # O TransformationController modificou o DataObject. Agora atualizamos
+            # o QGraphicsItem para refletir essas mudanças.
+            # Re-clipping *não* está sendo feito aqui. O objeto transformado pode
+            # agora estar (parcialmente) fora da viewport.
 
-            # Update graphics item directly with transformed data
             graphics_item.prepareGeometryChange()  # Notifica mudança iminente
             self._update_graphics_item_geometry(graphics_item, transformed_data_object)
             self._apply_style_to_item(
                 graphics_item, transformed_data_object
             )  # Garante cor/estilo
 
-            graphics_item.update()
-            self._scene.update(graphics_item.boundingRect())
+            graphics_item.update()  # Redesenha o item específico
+            self._scene.update(
+                graphics_item.boundingRect()
+            )  # Atualiza área antiga/nova
 
-            self._mark_as_modified()
+            self._state_manager.mark_as_modified()
+
         except Exception as e:
             QMessageBox.critical(
                 self,
@@ -1091,26 +717,21 @@ class GraphicsEditor(QMainWindow):
     def _find_graphics_item_for_object(
         self, data_obj: DataObject
     ) -> Optional[QGraphicsItem]:
-        """Encontra o QGraphicsItem na cena correspondente ao DataObject."""
+        """Encontra o QGraphicsItem na cena correspondente ao DataObject (pela identidade)."""
         if data_obj is None:
             return None
-        # Itera sobre todos os itens na cena
         for item in self._scene.items():
             if item is self._clip_rect_item:
                 continue
-            # Compara a identidade do objeto de dados associado (chave 0)
+            # Compara a identidade do objeto de dados associado
             if item.data(0) is data_obj:
                 return item
         return None
 
     def _update_graphics_item_geometry(self, item: QGraphicsItem, data: DataObject):
-        """Atualiza a geometria do item gráfico com base no DataObject."""
-        # Usa isinstance para garantir tipo correto do item e dos dados
+        """Atualiza a geometria do item gráfico com base no DataObject (igual a antes)."""
         if isinstance(data, Point) and isinstance(item, QGraphicsEllipseItem):
-            size, offset = (
-                data.GRAPHICS_SIZE,
-                data.GRAPHICS_SIZE / 2.0,
-            )
+            size, offset = data.GRAPHICS_SIZE, data.GRAPHICS_SIZE / 2.0
             new_rect = QRectF(data.x - offset, data.y - offset, size, size)
             if item.rect() != new_rect:
                 item.setRect(new_rect)
@@ -1120,19 +741,24 @@ class GraphicsEditor(QMainWindow):
                 item.setLine(new_line)
         elif isinstance(data, Polygon) and isinstance(item, QGraphicsPolygonItem):
             new_polygon_qf = QPolygonF([p.to_qpointf() for p in data.points])
-            if item.polygon().size() != new_polygon_qf.size() or any(
-                abs(p1.x() - p2.x()) > 1e-6 or abs(p1.y() - p2.y()) > 1e-6
-                for p1, p2 in zip(item.polygon(), new_polygon_qf)
-            ):
+            # Comparação mais robusta para QPolygonF
+            current_poly = item.polygon()
+            if (
+                current_poly.size() != new_polygon_qf.size()
+                or not np.allclose(
+                    current_poly.boundingRect().getCoords(),
+                    new_polygon_qf.boundingRect().getCoords(),
+                )
+                or any(p1 != p2 for p1, p2 in zip(current_poly, new_polygon_qf))
+            ):  # Verifica ponto a ponto se bboxes são iguais
                 item.setPolygon(new_polygon_qf)
         else:
             print(
-                f"AVISO: Combinação item/dado não prevista para atualização de geometria:"
-                f" {type(item).__name__} / {type(data).__name__}"
+                f"AVISO: Combinação item/dado não prevista para atualização: {type(item).__name__}/{type(data).__name__}"
             )
 
     def _apply_style_to_item(self, item: QGraphicsItem, data: DataObject):
-        """Reaplica estilo (cor, preenchimento, etc.) ao item gráfico."""
+        """Reaplica estilo (cor, preenchimento, etc.) ao item gráfico (igual a antes)."""
         if not hasattr(data, "color"):
             return
         color = (
@@ -1140,9 +766,7 @@ class GraphicsEditor(QMainWindow):
             if isinstance(data.color, QColor) and data.color.isValid()
             else QColor(Qt.black)
         )
-
-        pen = None
-        brush = None
+        pen, brush = None, None
 
         if isinstance(data, Point) and isinstance(item, QGraphicsEllipseItem):
             pen = QPen(color, 1)
@@ -1151,11 +775,11 @@ class GraphicsEditor(QMainWindow):
             pen = QPen(color, data.GRAPHICS_WIDTH)
         elif isinstance(data, Polygon) and isinstance(item, QGraphicsPolygonItem):
             pen = QPen(color, data.GRAPHICS_BORDER_WIDTH)
-            brush = QBrush()  # Começa como NoBrush
+            brush = QBrush()
             if data.is_open:
                 pen.setStyle(Qt.DashLine)
                 brush.setStyle(Qt.NoBrush)
-            else:  # Fechado
+            else:
                 pen.setStyle(Qt.SolidLine)
                 if data.is_filled:
                     brush.setStyle(Qt.SolidPattern)
@@ -1165,20 +789,25 @@ class GraphicsEditor(QMainWindow):
                 else:
                     brush.setStyle(Qt.NoBrush)
 
-        # Aplica apenas se mudou para evitar updates desnecessários
+        # Aplica apenas se mudou
         current_pen = getattr(item, "pen", lambda: None)()
         current_brush = getattr(item, "brush", lambda: None)()
-
-        if pen is not None and (current_pen is None or current_pen != pen):
-            if hasattr(item, "setPen"):
-                item.setPen(pen)
-        if brush is not None and (current_brush is None or current_brush != brush):
-            if hasattr(item, "setBrush"):
-                item.setBrush(brush)
+        if (
+            pen is not None
+            and (current_pen is None or current_pen != pen)
+            and hasattr(item, "setPen")
+        ):
+            item.setPen(pen)
+        if (
+            brush is not None
+            and (current_brush is None or current_brush != brush)
+            and hasattr(item, "setBrush")
+        ):
+            item.setBrush(brush)
 
     # --- Importação/Exportação OBJ ---
 
-    def _prompt_load_obj(self) -> None:
+    def _prompt_load_obj(self):
         """Abre diálogo para carregar arquivo OBJ."""
         if not self._check_unsaved_changes("carregar um novo arquivo"):
             return
@@ -1188,20 +817,19 @@ class GraphicsEditor(QMainWindow):
 
     def _load_obj_file(self, obj_filepath: str, clear_before_load: bool = True):
         """Carrega e processa um arquivo OBJ."""
-        self._set_status_message(
-            f"Carregando {os.path.basename(obj_filepath)}...", 0
-        )  # 0 = sem timeout
-        QApplication.processEvents()
+        self._set_status_message(f"Carregando {os.path.basename(obj_filepath)}...", 0)
+        QApplication.processEvents()  # Força atualização da UI
 
+        # Leitura (IOHandler)
         read_result = self._io_handler.read_obj_lines(obj_filepath)
         if read_result is None:
             self._set_status_message("Falha ao ler arquivo OBJ.")
             return
         obj_lines, mtl_filename_relative = read_result
 
+        # Leitura MTL (IOHandler)
         material_colors: Dict[str, QColor] = {}
         mtl_warnings: List[str] = []
-        mtl_filepath_full: Optional[str] = None
         if mtl_filename_relative:
             obj_dir = os.path.dirname(obj_filepath)
             mtl_filepath_full = os.path.normpath(
@@ -1215,51 +843,47 @@ class GraphicsEditor(QMainWindow):
                 mtl_warnings.append(
                     f"Arquivo MTL '{mtl_filename_relative}' não encontrado em '{obj_dir}'."
                 )
-                mtl_filepath_full = None
 
-        # Analisa dados OBJ -> DataObjects
+        # Parsing (ObjectManager)
         parsed_objects, obj_warnings = self._object_manager.parse_obj_data(
-            obj_lines,
-            material_colors,
-            self._current_draw_color,  # Cor padrão se material falhar
+            obj_lines, material_colors, self._state_manager.draw_color()  # Cor padrão
         )
 
+        # Limpeza e Adição à Cena
         if clear_before_load:
-            self._clear_scene_confirmed()  # Limpa cena e estado
+            self._clear_scene_confirmed()  # Limpa cena e reseta estado (via state_manager)
 
-        # Adiciona objetos à cena
-        creation_errors = []
         num_added = 0
         num_clipped_out = 0
         if not parsed_objects and not mtl_warnings and not obj_warnings:
             msg = f"Nenhum objeto geométrico (v, l, f, p) ou material válido encontrado em '{os.path.basename(obj_filepath)}'."
-            if mtl_filename_relative and not mtl_filepath_full:
+            if mtl_filename_relative and not os.path.exists(
+                mtl_filepath_full
+            ):  # Verifica se mtl era esperado mas não achado
                 msg += f"\nArquivo MTL '{mtl_filename_relative}' referenciado não foi encontrado."
             QMessageBox.information(self, "Arquivo Vazio ou Não Suportado", msg)
             self._set_status_message("Carregamento concluído (sem geometria).")
         else:
             for data_obj in parsed_objects:
+                # Conta itens antes/depois para ver se foi adicionado (pós-clip)
                 item_count_before = len(
                     [i for i in self._scene.items() if i is not self._clip_rect_item]
                 )
-                self._add_data_object_to_scene(data_obj)
+                self._add_data_object_to_scene(data_obj)  # Adiciona (com clipping)
                 item_count_after = len(
                     [i for i in self._scene.items() if i is not self._clip_rect_item]
                 )
                 if item_count_after > item_count_before:
                     num_added += 1
                 elif not isinstance(data_obj, Point):
-                    num_clipped_out += 1
+                    num_clipped_out += 1  # Se não é ponto e não aumentou, foi clipado
 
             self._scene.update()
-            # Reset view já feito em _clear_scene_confirmed se aplicável
-
             # Relatório final
-            all_warnings = mtl_warnings + obj_warnings + creation_errors
+            all_warnings = mtl_warnings + obj_warnings
             final_message = f"Carregado: {num_added} objeto(s) de '{os.path.basename(obj_filepath)}'."
             if num_clipped_out > 0:
                 final_message += f" ({num_clipped_out} fora da viewport)"
-
             if all_warnings:
                 formatted_warnings = "- " + "\n- ".join(all_warnings)
                 QMessageBox.warning(
@@ -1268,23 +892,21 @@ class GraphicsEditor(QMainWindow):
                     f"{final_message}\n\nAvisos/Erros:\n{formatted_warnings}",
                 )
                 final_message += " (com avisos)"
-
             self._set_status_message(final_message)
 
         # Atualiza estado pós-carregamento
-        self._current_filepath = obj_filepath
-        self._mark_as_saved()  # Considera salvo após carregar
-        self._update_window_title()
+        self._state_manager.set_current_filepath(obj_filepath)
+        self._state_manager.mark_as_saved()  # Considera salvo após carregar
 
     def _prompt_save_as_obj(self) -> bool:
-        """Abre diálogo "Salvar Como" e chama a lógica de salvamento."""
-        self._finish_current_drawing(commit=False)
-
+        """Abre diálogo "Salvar Como"."""
+        self._drawing_controller.cancel_current_drawing()
+        current_path = self._state_manager.current_filepath()
         default_name = (
-            os.path.basename(self._current_filepath)
-            if self._current_filepath
-            else "cena_sem_titulo.obj"
+            os.path.basename(current_path) if current_path else "cena_sem_titulo.obj"
         )
+
+        # IOHandler retorna o caminho BASE (sem extensão)
         base_filepath = self._io_handler.prompt_save_obj(default_name)
         if not base_filepath:
             self._set_status_message("Salvar cancelado.")
@@ -1292,48 +914,42 @@ class GraphicsEditor(QMainWindow):
 
         # Chama salvamento real
         if self._save_to_file(base_filepath):
-            # Remove a extensão .obj que prompt_save_obj pode ter retornado no base_filepath
-            self._current_filepath = (
-                base_filepath + ".obj"
-                if not base_filepath.lower().endswith(".obj")
-                else base_filepath
-            )
-            self._mark_as_saved()
-            self._update_window_title()
+            # Atualiza o path no state manager (adicionando .obj)
+            self._state_manager.set_current_filepath(base_filepath + ".obj")
+            self._state_manager.mark_as_saved()
+            # Título atualiza via sinal
             return True
         else:
             self._set_status_message("Falha ao salvar.")
             return False
 
     def _save_current_file(self) -> bool:
-        """Salva a cena no arquivo atual. Se não houver, chama 'Salvar Como'."""
-        if not self._current_filepath:
+        """Salva no arquivo atual ou chama 'Salvar Como'."""
+        current_path = self._state_manager.current_filepath()
+        if not current_path:
             return self._prompt_save_as_obj()
         else:
-            self._finish_current_drawing(commit=False)
-            base_filepath, _ = os.path.splitext(
-                self._current_filepath
-            )  # Obtém caminho base sem extensão
+            self._drawing_controller.cancel_current_drawing()
+            base_filepath, _ = os.path.splitext(current_path)  # Obtém caminho base
             if self._save_to_file(base_filepath):
-                self._mark_as_saved()
-                self._update_window_title()
+                self._state_manager.mark_as_saved()
                 return True
             else:
-                return False  # Mensagem de erro já mostrada por _save_to_file
+                return False  # Mensagem de erro já mostrada
 
     def _save_to_file(self, base_filepath: str) -> bool:
-        """Lógica interna para gerar e escrever arquivos OBJ e MTL."""
+        """Lógica interna para gerar e escrever arquivos OBJ/MTL."""
         self._set_status_message(f"Salvando em {os.path.basename(base_filepath)}...", 0)
         QApplication.processEvents()
 
         # Coleta DataObjects da cena
         scene_data_objects: List[DataObject] = []
         for item in self._scene.items():
-            # Ignora itens temporários
+            # Ignora viewport e itens temporários do drawing controller
             if (
-                item is self._temp_line_item
-                or item is self._temp_polygon_path
-                or item is self._clip_rect_item
+                item is self._clip_rect_item
+                or item is self._drawing_controller._temp_line_item
+                or item is self._drawing_controller._temp_polygon_path
             ):
                 continue
             data = item.data(0)
@@ -1341,29 +957,25 @@ class GraphicsEditor(QMainWindow):
                 scene_data_objects.append(data)
 
         if not scene_data_objects:
-            QMessageBox.information(
-                self, "Nada para Salvar", "A cena (dentro da viewport) está vazia."
-            )
+            QMessageBox.information(self, "Nada para Salvar", "A cena está vazia.")
             self._set_status_message("Nada para salvar.")
-            # Technically correct to return True as saving an empty file is not an error
-            # but maybe False is better user feedback? Let's return True.
-            return True  # Saving an empty scene is successful
+            return True  # Salvar vazio é sucesso
 
-        # Gera dados OBJ/MTL
+        # Geração (ObjectManager)
         mtl_filename = os.path.basename(base_filepath) + ".mtl"
         obj_lines, mtl_lines, warnings_gen = self._object_manager.generate_obj_data(
             scene_data_objects, mtl_filename
         )
 
         if obj_lines is None:  # Geração falhou
-            msg = "Falha ao gerar dados OBJ para salvar."
+            msg = "Falha ao gerar dados OBJ."
             if warnings_gen:
                 msg += "\n\nAvisos:\n- " + "\n- ".join(warnings_gen)
             QMessageBox.critical(self, "Erro na Geração OBJ", msg)
             self._set_status_message("Erro ao gerar OBJ.")
             return False
 
-        # Escreve arquivos
+        # Escrita (IOHandler)
         success = self._io_handler.write_obj_and_mtl(
             base_filepath, obj_lines, mtl_lines
         )
@@ -1375,10 +987,8 @@ class GraphicsEditor(QMainWindow):
                 msg += f" e '{os.path.basename(base_filepath)}.mtl'"
             msg += "."
             if warnings_gen:
-                formatted_warnings = "\n\nAvisos:\n- " + "\n- ".join(warnings_gen)
-                QMessageBox.warning(
-                    self, "Salvo com Avisos", f"{msg}{formatted_warnings}"
-                )
+                formatted = "\n\nAvisos:\n- " + "\n- ".join(warnings_gen)
+                QMessageBox.warning(self, "Salvo com Avisos", f"{msg}{formatted}")
                 msg += " (com avisos)"
             self._set_status_message(msg)
             return True
@@ -1389,25 +999,17 @@ class GraphicsEditor(QMainWindow):
             )
             return False
 
-    def _set_line_clipper(self, algorithm: LineClippingAlgorithm):
-        """Sets the line clipping algorithm."""
-        self._selected_line_clipper = algorithm
-        algo_name = (
-            "Cohen-Sutherland"
-            if algorithm == LineClippingAlgorithm.COHEN_SUTHERLAND
-            else "Liang-Barsky"
-        )
-        self._set_status_message(f"Clipping de linha: {algo_name}", 2000)
-
+    # --- Viewport ---
     def _toggle_viewport_visibility(self, checked: bool):
-        """Shows or hides the visual viewport rectangle."""
+        """Mostra ou oculta o retângulo visual da viewport."""
         self._clip_rect_item.setVisible(checked)
+        # Atualiza o estado da ação no menu (caso seja clicado fora do menu)
+        self._ui_manager.update_viewport_action_state(checked)
 
     # --- Evento de Fechamento ---
-
     def closeEvent(self, event: QCloseEvent) -> None:
         """Chamado ao tentar fechar a janela."""
-        self._finish_current_drawing(commit=False)
+        self._drawing_controller.cancel_current_drawing()  # Garante cancelamento
         if self._check_unsaved_changes("fechar a aplicação"):
             event.accept()  # Permite fechar
         else:

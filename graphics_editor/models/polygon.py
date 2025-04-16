@@ -79,7 +79,7 @@ class Polygon:
 
         # Flags
         polygon_item.setFlag(QGraphicsItem.ItemIsSelectable)
-        polygon_item.setFlag(QGraphicsItem.ItemIsMovable)
+        # polygon_item.setFlag(QGraphicsItem.ItemIsMovable)
 
         # Associa dados
         polygon_item.setData(0, self)
