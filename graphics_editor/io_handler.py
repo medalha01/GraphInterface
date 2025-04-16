@@ -4,226 +4,280 @@ from typing import List, Optional, Dict, Tuple
 
 from PyQt5.QtWidgets import QFileDialog, QMessageBox, QWidget
 from PyQt5.QtGui import QColor
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QStandardPaths
+
 
 class IOHandler:
     """
-    Gerencia diálogos de arquivo e operações básicas de leitura/escrita
-    para arquivos OBJ e MTL.
+    Gerencia diálogos de arquivo e leitura/escrita de arquivos OBJ e MTL.
     """
 
     def __init__(self, parent_widget: QWidget):
-        """
-        Inicializa o IOHandler.
-        Args:
-            parent_widget: O widget pai (geralmente a janela principal) para os diálogos.
-        """
+        """Inicializa com o widget pai para diálogos."""
         self._parent = parent_widget
-        self._last_dir: Optional[str] = None # Armazena o último diretório acessado
+        # Começa no diretório de documentos ou home do usuário
+        self._last_dir: str = QStandardPaths.writableLocation(
+            QStandardPaths.DocumentsLocation
+        ) or os.path.expanduser("~")
 
     def prompt_load_obj(self) -> Optional[str]:
-        """
-        Abre um diálogo para selecionar um arquivo OBJ para carregar.
-        Retorna:
-            O caminho do arquivo selecionado, ou None se cancelado.
-        """
+        """Abre diálogo para selecionar um arquivo OBJ."""
         filepath, _ = QFileDialog.getOpenFileName(
             self._parent,
-            "Carregar Arquivo OBJ",
-            self._last_dir or "", # Usa o último diretório ou o padrão
+            "Abrir Arquivo OBJ",
+            self._last_dir,
             "Wavefront OBJ (*.obj);;Todos os Arquivos (*)",
         )
         if filepath:
-            self._last_dir = os.path.dirname(filepath) # Atualiza o último diretório
+            self._last_dir = os.path.dirname(filepath)  # Atualiza último diretório
             return filepath
-        return None # Retorna None se o usuário cancelar
+        return None
 
-    def prompt_save_obj(self, default_filename: str = "untitled.obj") -> Optional[str]:
+    def prompt_save_obj(
+        self, default_filename: str = "sem_titulo.obj"
+    ) -> Optional[str]:
         """
-        Abre um diálogo para selecionar um caminho base para salvar arquivos OBJ e MTL.
-        Garante que a extensão .obj seja sugerida.
-        Args:
-            default_filename: O nome de arquivo sugerido no diálogo.
-        Returns:
-            O caminho base selecionado (sem garantia de extensão), ou None se cancelado.
-            Ex: Se o usuário escolher 'meu/arquivo.obj', retorna 'meu/arquivo'.
+        Abre diálogo para selecionar um caminho BASE para salvar OBJ/MTL.
+        Retorna o caminho base (sem extensão garantida), ou None se cancelado.
         """
-        # Garante que o nome padrão termine com .obj
-        if not default_filename.lower().endswith(".obj"):
+        # Garante nome padrão com .obj
+        if default_filename and not default_filename.lower().endswith(".obj"):
             default_filename += ".obj"
+
+        full_default_path = os.path.join(self._last_dir, default_filename)
 
         filepath, _ = QFileDialog.getSaveFileName(
             self._parent,
             "Salvar Como Arquivo OBJ",
-            os.path.join(self._last_dir or "", default_filename), # Combina último dir e nome
+            full_default_path,
             "Wavefront OBJ (*.obj);;Todos os Arquivos (*)",
-            options=QFileDialog.Options() | QFileDialog.DontConfirmOverwrite # Deixa o sistema lidar com confirmação
+            options=QFileDialog.Options(),  # Usa confirmação nativa do OS
         )
         if filepath:
-            self._last_dir = os.path.dirname(filepath) # Atualiza o último diretório
-            # Remove a extensão .obj (ou qualquer outra) para obter o caminho base
+            self._last_dir = os.path.dirname(filepath)
+            # Retorna o caminho completo escolhido pelo usuário
+            # A extensão será gerenciada por quem chama (write_obj_and_mtl)
             base_path, _ = os.path.splitext(filepath)
-            return base_path
-        return None # Retorna None se o usuário cancelar
+            if not base_path:  # Caso digite só ".obj"
+                QMessageBox.warning(
+                    self._parent, "Nome Inválido", "Nome de arquivo inválido."
+                )
+                return None
+            return base_path  # Retorna caminho sem extensão
+        return None
 
-    def read_obj_lines(self, filepath: str) -> Optional[Tuple[List[str], Optional[str]]]:
+    def read_obj_lines(
+        self, filepath: str
+    ) -> Optional[Tuple[List[str], Optional[str]]]:
         """
-        Lê as linhas relevantes de um arquivo OBJ e encontra a referência mtllib.
-        Args:
-            filepath: O caminho para o arquivo OBJ.
+        Lê linhas relevantes de um arquivo OBJ e encontra a referência mtllib.
+
         Returns:
-            Uma tupla contendo:
-              - Lista de linhas OBJ relevantes (sem espaços extras, não vazias, não comentários).
-              - O nome do arquivo especificado na linha mtllib (se encontrado), senão None.
-            Retorna None se o arquivo não puder ser lido ou ocorrer um erro.
+            Tupla: (linhas_obj, nome_mtl) ou None em caso de erro.
         """
         obj_lines: List[str] = []
         mtl_filename: Optional[str] = None
-        try:
-            with open(filepath, "r", encoding='utf-8') as f: # Especifica encoding
-                for line_num, line in enumerate(f, 1):
-                    stripped_line = line.strip()
-                    # Ignora linhas vazias ou comentários
-                    if not stripped_line or stripped_line.startswith("#"):
-                        continue
+        encodings_to_try = ["utf-8", "iso-8859-1", "cp1252", "latin-1"]
+        content = None
 
-                    obj_lines.append(stripped_line)
-                    parts = stripped_line.split()
-                    # Procura pela diretiva 'mtllib' (case-insensitive)
-                    if len(parts) > 1 and parts[0].lower() == "mtllib":
-                        # Armazena apenas a primeira referência mtllib encontrada
-                        if mtl_filename is None:
-                            # Junta o resto da linha caso o nome tenha espaços (incomum mas possível)
-                            mtl_filename = " ".join(parts[1:])
-                        else:
-                            QMessageBox.warning(self._parent, "Aviso de Leitura OBJ",
-                                                f"Múltiplas linhas 'mtllib' encontradas no arquivo '{os.path.basename(filepath)}'. Usando a primeira: '{mtl_filename}'.")
+        try:
+            for enc in encodings_to_try:
+                try:
+                    with open(filepath, "r", encoding=enc) as f:
+                        content = f.readlines()
+                    break  # Sucesso na leitura
+                except UnicodeDecodeError:
+                    continue  # Tenta próximo encoding
+                except Exception as e_inner:
+                    raise e_inner  # Outro erro (permissão, etc)
+
+            if content is None:
+                raise IOError(
+                    f"Não foi possível decodificar usando: {', '.join(encodings_to_try)}."
+                )
+
+            # Processa linhas lidas
+            for line in content:
+                stripped_line = line.strip()
+                if not stripped_line or stripped_line.startswith("#"):
+                    continue
+
+                obj_lines.append(stripped_line)
+                parts = stripped_line.split()
+                # Procura 'mtllib' (case-insensitive), pega apenas a primeira ocorrência
+                if (
+                    len(parts) > 1
+                    and parts[0].lower() == "mtllib"
+                    and mtl_filename is None
+                ):
+                    mtl_filename = " ".join(parts[1:])
 
             return obj_lines, mtl_filename
 
         except FileNotFoundError:
-            QMessageBox.critical(self._parent, "Erro de Leitura",
-                                 f"Arquivo OBJ não encontrado: {filepath}")
+            QMessageBox.critical(
+                self._parent, "Erro", f"Arquivo OBJ não encontrado:\n{filepath}"
+            )
+            return None
+        except IOError as e:
+            QMessageBox.critical(
+                self._parent,
+                "Erro de Leitura OBJ",
+                f"Não foi possível ler/decodificar:\n'{os.path.basename(filepath)}'\n{e}",
+            )
             return None
         except Exception as e:
-            QMessageBox.critical(self._parent, "Erro de Leitura OBJ",
-                                 f"Não foi possível ler o arquivo '{os.path.basename(filepath)}':\n{e}")
+            QMessageBox.critical(
+                self._parent,
+                "Erro Inesperado OBJ",
+                f"Erro ao ler '{os.path.basename(filepath)}':\n{e}",
+            )
             return None
 
     def read_mtl_file(self, filepath: str) -> Tuple[Dict[str, QColor], List[str]]:
         """
-        Analisa um arquivo de biblioteca de materiais (.mtl).
-        Foca principalmente na cor difusa (Kd) para definir a cor do objeto.
-        Args:
-            filepath: O caminho para o arquivo MTL.
+        Analisa um arquivo MTL, focando em 'newmtl' e 'Kd' (cor difusa).
+
         Returns:
-            Uma tupla contendo:
-             - Um dicionário mapeando nomes de materiais para objetos QColor.
-             - Uma lista de mensagens de aviso geradas durante a análise.
+            Tupla: (dicionario_cores, lista_avisos)
         """
         material_colors: Dict[str, QColor] = {}
         warnings: List[str] = []
         current_mtl_name: Optional[str] = None
-        mtl_basename = os.path.basename(filepath) # Para mensagens de erro
+        mtl_basename = os.path.basename(filepath)
+        encodings_to_try = ["utf-8", "iso-8859-1", "cp1252", "latin-1"]
+        content = None
 
         try:
-            with open(filepath, "r", encoding='utf-8') as f: # Especifica encoding
-                for line_num, line in enumerate(f, 1):
-                    stripped_line = line.strip()
-                    # Ignora linhas vazias ou comentários
-                    if not stripped_line or stripped_line.startswith("#"):
-                        continue
+            for enc in encodings_to_try:
+                try:
+                    with open(filepath, "r", encoding=enc) as f:
+                        content = f.readlines()
+                        break
+                except UnicodeDecodeError:
+                    continue
+                except Exception as e_inner:
+                    raise e_inner
 
-                    parts = stripped_line.split()
-                    command = parts[0].lower()
+            if content is None:
+                raise IOError(
+                    f"Não foi possível decodificar usando: {', '.join(encodings_to_try)}."
+                )
 
-                    if command == "newmtl":
-                        if len(parts) > 1:
-                            current_mtl_name = " ".join(parts[1:]) # Permite nomes com espaços
-                            # Define uma cor padrão inicial (cinza) que será sobrescrita por Kd
+            # Processa linhas MTL
+            for line_num, line in enumerate(content, 1):
+                stripped_line = line.strip()
+                if not stripped_line or stripped_line.startswith("#"):
+                    continue
+
+                parts = stripped_line.split()
+                command = parts[0].lower()
+
+                if command == "newmtl":
+                    if len(parts) > 1:
+                        current_mtl_name = " ".join(parts[1:])
+                        # Define cor padrão (cinza) que pode ser sobrescrita por Kd
+                        if current_mtl_name not in material_colors:
                             material_colors[current_mtl_name] = QColor(Qt.gray)
-                        else:
-                            warnings.append(f"MTL '{mtl_basename}' Linha {line_num}: 'newmtl' sem nome de material.")
-                            current_mtl_name = None # Reseta o material ativo
+                        # else: # Material redefinido, sobrescreve silenciosamente
+                        #     warnings.append(f"MTL Linha {line_num}: Material '{current_mtl_name}' redefinido.")
+                    else:
+                        warnings.append(f"MTL Linha {line_num}: 'newmtl' sem nome.")
+                        current_mtl_name = None
 
-                    elif command == "kd":  # Cor difusa (a mais comum para cor base)
-                        if current_mtl_name:
-                            if len(parts) >= 4: # Precisa de 'Kd' e R, G, B
-                                try:
-                                    # Converte para float, permitindo valores fora de [0, 1] e clampeando
-                                    r = float(parts[1])
-                                    g = float(parts[2])
-                                    b = float(parts[3])
-                                    # Converte para int [0, 255], clampando entre 0.0 e 1.0 antes
-                                    q_r = int(max(0.0, min(1.0, r)) * 255)
-                                    q_g = int(max(0.0, min(1.0, g)) * 255)
-                                    q_b = int(max(0.0, min(1.0, b)) * 255)
-                                    # Cria a QColor e armazena no dicionário
-                                    material_colors[current_mtl_name] = QColor(q_r, q_g, q_b)
-                                except (ValueError):
-                                    warnings.append(f"MTL '{mtl_basename}' Linha {line_num}: Ignorando cor 'Kd' com valores não numéricos para '{current_mtl_name}'.")
-                            else:
-                                warnings.append(f"MTL '{mtl_basename}' Linha {line_num}: Ignorando cor 'Kd' malformada (valores R, G, B ausentes) para '{current_mtl_name}'.")
-                        else:
-                            warnings.append(f"MTL '{mtl_basename}' Linha {line_num}: Ignorando 'Kd' pois nenhum material ('newmtl') está ativo.")
+                # Cor Difusa (Kd R G B) - principal cor
+                elif command == "kd" and current_mtl_name:
+                    if len(parts) >= 4:
+                        try:
+                            # Converte para float [0,1] e depois int [0,255]
+                            r = max(0.0, min(1.0, float(parts[1])))
+                            g = max(0.0, min(1.0, float(parts[2])))
+                            b = max(0.0, min(1.0, float(parts[3])))
+                            q_r, q_g, q_b = int(r * 255), int(g * 255), int(b * 255)
+                            material_colors[current_mtl_name] = QColor(q_r, q_g, q_b)
+                        except ValueError:
+                            warnings.append(
+                                f"MTL Linha {line_num}: Valores Kd inválidos para '{current_mtl_name}'."
+                            )
+                    else:
+                        warnings.append(
+                            f"MTL Linha {line_num}: Kd malformado para '{current_mtl_name}'."
+                        )
 
-                    # Poderíamos adicionar suporte a outras propriedades (Ka, Ks, d, map_Kd, etc.) aqui se necessário
+                # Ignora outros comandos MTL (Ka, Ks, Ns, d, Tr, illum, map_*)
 
         except FileNotFoundError:
-            warnings.append(f"Arquivo MTL não encontrado: {filepath}")
+            warnings.append(
+                f"Arquivo MTL '{mtl_basename}' não encontrado em '{filepath}'."
+            )
+        except IOError as e:
+            warnings.append(f"Erro de leitura/decodificação MTL '{mtl_basename}': {e}")
         except Exception as e:
-            warnings.append(f"Erro inesperado ao ler o arquivo MTL '{mtl_basename}': {e}")
+            warnings.append(f"Erro inesperado ao ler MTL '{mtl_basename}': {e}")
 
         return material_colors, warnings
 
-    def write_obj_and_mtl(self, base_filepath: str, obj_lines: List[str],
-                          mtl_lines: List[str]) -> bool:
+    def write_obj_and_mtl(
+        self, base_filepath: str, obj_lines: List[str], mtl_lines: Optional[List[str]]
+    ) -> bool:
         """
-        Escreve as linhas OBJ e MTL para os arquivos correspondentes.
+        Escreve as linhas OBJ e (se houver) MTL nos arquivos correspondentes.
+
         Args:
-            base_filepath: O caminho base para os arquivos (ex: 'meudir/meuarquivo').
-                           As extensões '.obj' e '.mtl' serão adicionadas.
-            obj_lines: Lista de strings para o arquivo .obj.
-            mtl_lines: Lista de strings para o arquivo .mtl (pode ser vazia).
+            base_filepath: Caminho base (ex: 'meudir/arquivo'). Extensões serão adicionadas.
+            obj_lines: Linhas do arquivo OBJ.
+            mtl_lines: Linhas do arquivo MTL (ou None/vazio).
+
         Returns:
-            True se ambos os arquivos (ou apenas OBJ se MTL for vazio) foram escritos com sucesso, False caso contrário.
+            True se sucesso, False se erro.
         """
         obj_filepath = base_filepath + ".obj"
         mtl_filepath = base_filepath + ".mtl"
         obj_success = False
-        mtl_success = False # Assume sucesso se não houver linhas MTL
+        mtl_success = True  # Assume sucesso se não houver MTL para salvar
 
-        # --- Escreve Arquivo OBJ ---
+        # --- Escreve OBJ ---
         try:
-            with open(obj_filepath, "w", encoding='utf-8') as f: # Especifica encoding
-                for line in obj_lines:
-                    f.write(line + "\n") # Adiciona nova linha ao final de cada string
+            with open(obj_filepath, "w", encoding="utf-8") as f:
+                f.write(
+                    "\n".join(obj_lines) + "\n"
+                )  # Junta linhas e adiciona uma no final
             obj_success = True
         except IOError as e:
-            QMessageBox.critical(self._parent, "Erro de Escrita OBJ",
-                                 f"Não foi possível escrever no arquivo '{os.path.basename(obj_filepath)}':\n{e}")
+            QMessageBox.critical(
+                self._parent,
+                "Erro de Escrita OBJ",
+                f"Não foi possível escrever:\n'{os.path.basename(obj_filepath)}'\n{e}",
+            )
+            return False  # Falha crítica
         except Exception as e:
-            QMessageBox.critical(self._parent, "Erro Inesperado OBJ",
-                                 f"Ocorreu um erro inesperado ao salvar em '{os.path.basename(obj_filepath)}':\n{e}")
+            QMessageBox.critical(
+                self._parent,
+                "Erro Inesperado OBJ",
+                f"Erro ao salvar OBJ:\n'{os.path.basename(obj_filepath)}'\n{e}",
+            )
+            return False
 
-        if not obj_success:
-            return False # Se falhou em escrever o OBJ, não adianta continuar
-
-        # --- Escreve Arquivo MTL (se houver linhas) ---
+        # --- Escreve MTL (se necessário) ---
         if mtl_lines:
+            mtl_success = False  # Reseta, pois agora precisa salvar
             try:
-                with open(mtl_filepath, "w", encoding='utf-8') as f: # Especifica encoding
-                    for line in mtl_lines:
-                        f.write(line + "\n")
+                with open(mtl_filepath, "w", encoding="utf-8") as f:
+                    f.write("\n".join(mtl_lines) + "\n")
                 mtl_success = True
             except IOError as e:
-                QMessageBox.critical(self._parent, "Erro de Escrita MTL",
-                                     f"Não foi possível escrever no arquivo '{os.path.basename(mtl_filepath)}':\n{e}")
+                QMessageBox.critical(
+                    self._parent,
+                    "Erro de Escrita MTL",
+                    f"Não foi possível escrever MTL:\n'{os.path.basename(mtl_filepath)}'\n{e}",
+                )
+                # OBJ pode ter sido salvo, mas o MTL falhou. Considera falha total.
             except Exception as e:
-                QMessageBox.critical(self._parent, "Erro Inesperado MTL",
-                                     f"Ocorreu um erro inesperado ao salvar em '{os.path.basename(mtl_filepath)}':\n{e}")
-        else:
-            # Se não há linhas MTL para escrever, considera como sucesso
-            mtl_success = True
+                QMessageBox.critical(
+                    self._parent,
+                    "Erro Inesperado MTL",
+                    f"Erro ao salvar MTL:\n'{os.path.basename(mtl_filepath)}'\n{e}",
+                )
 
-        return obj_success and mtl_success # Retorna True apenas se ambos foram bem-sucedidos
+        # Retorna True apenas se ambos (ou só OBJ se MTL não era necessário) foram salvos
+        return obj_success and mtl_success

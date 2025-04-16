@@ -2,65 +2,59 @@
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QPen, QBrush, QColor
 from PyQt5.QtWidgets import QGraphicsItem, QGraphicsEllipseItem
-from typing import Tuple
+from typing import Tuple, List, Optional  # Import Optional
+
 
 class Point:
     """Representa um ponto geométrico 2D com coordenadas e cor."""
 
-    def __init__(self, x: float, y: float, color: QColor = QColor(Qt.black)):
-        """
-        Inicializa um ponto.
-        Args:
-            x: Coordenada X.
-            y: Coordenada Y.
-            color: Cor do ponto (padrão: preto).
-        """
-        self.x: float = x
-        self.y: float = y
-        # Garante que a cor seja válida, senão usa preto
-        self.color: QColor = color if color.isValid() else QColor(Qt.black)
+    GRAPHICS_SIZE = 6.0  # Diâmetro visual do ponto na cena
+
+    def __init__(self, x: float, y: float, color: Optional[QColor] = None):
+        """Inicializa um ponto."""
+        self.x: float = float(x)
+        self.y: float = float(y)
+        # Cor padrão preta se não fornecida ou inválida
+        self.color: QColor = (
+            color if isinstance(color, QColor) and color.isValid() else QColor(Qt.black)
+        )
 
     def to_qpointf(self) -> QPointF:
-        """Converte as coordenadas do Ponto para um objeto QPointF."""
+        """Converte para QPointF."""
         return QPointF(self.x, self.y)
 
     def create_graphics_item(self) -> QGraphicsEllipseItem:
-        """
-        Cria uma representação gráfica (QGraphicsEllipseItem) para este ponto.
-        Retorna:
-            Um QGraphicsEllipseItem configurado para representar o ponto.
-        """
-        size: float = 6.0  # Diâmetro do círculo que representa o ponto
-        offset: float = size / 2.0 # Metade do tamanho para centralizar a elipse
+        """Cria a representação gráfica QGraphicsEllipseItem."""
+        offset = self.GRAPHICS_SIZE / 2.0
+        # Cria elipse centrada em (x, y)
+        point_item = QGraphicsEllipseItem(
+            self.x - offset, self.y - offset, self.GRAPHICS_SIZE, self.GRAPHICS_SIZE
+        )
 
-        # Cria a elipse centrada nas coordenadas (x, y)
-        point_item = QGraphicsEllipseItem(self.x - offset, self.y - offset, size, size)
+        # Aparência
+        pen = QPen(self.color, 1)  # Borda fina
+        brush = QBrush(self.color)  # Preenchimento sólido
+        point_item.setPen(pen)
+        point_item.setBrush(brush)
 
-        # Define a aparência (caneta para borda, pincel para preenchimento)
-        point_item.setPen(QPen(self.color, 1)) # Borda fina com a cor do ponto
-        point_item.setBrush(QBrush(self.color)) # Preenchimento com a cor do ponto
+        # Flags para interação
+        point_item.setFlag(QGraphicsItem.ItemIsSelectable)
+        point_item.setFlag(
+            QGraphicsItem.ItemIsMovable
+        )  # Permite mover com ferramentas de seleção
 
-        # Define flags para interação na QGraphicsScene
-        point_item.setFlag(QGraphicsItem.ItemIsMovable)   # Permite mover o ponto
-        point_item.setFlag(QGraphicsItem.ItemIsSelectable)# Permite selecionar o ponto
-
-        # Associa este objeto de dados (self) ao item gráfico
-        # O número 0 é uma chave de dados comum para o objeto principal associado
+        # Associa este objeto de dados ao item gráfico (chave 0)
         point_item.setData(0, self)
-
         return point_item
 
     def get_coords(self) -> Tuple[float, float]:
-         """Retorna as coordenadas (x, y) como uma tupla."""
-         return (self.x, self.y)
+        """Retorna as coordenadas (x, y) como tupla."""
+        return (self.x, self.y)
 
     def get_center(self) -> Tuple[float, float]:
-        """
-        Retorna as coordenadas do centro geométrico do ponto.
-        Para um ponto, o centro é sua própria coordenada.
-        """
+        """Retorna o centro geométrico (é o próprio ponto)."""
         return self.get_coords()
 
     def __repr__(self) -> str:
-        """Representação textual do objeto Point."""
-        return f"Point(x={self.x:.2f}, y={self.y:.2f}, color={self.color.name()})"
+        """Representação textual."""
+        return f"Point(x={self.x:.3f}, y={self.y:.3f}, color={self.color.name()})"
