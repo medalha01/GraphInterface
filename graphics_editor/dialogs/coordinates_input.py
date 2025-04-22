@@ -26,17 +26,18 @@ class CoordinateInputDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None, mode: str = "point"):
         """
         Args:
-            mode: 'point', 'line' ou 'polygon'.
+            mode: 'point', 'line', 'polygon', or 'bezier'.
         """
         super().__init__(parent)
         self.mode: str = mode.lower()
-        if self.mode not in ["point", "line", "polygon"]:
+        if self.mode not in ["point", "line", "polygon", "bezier"]: # Add bezier
             raise ValueError(
-                f"Modo inválido: '{self.mode}'. Use 'point', 'line', 'polygon'."
+                f"Modo inválido: '{self.mode}'. Use 'point', 'line', 'polygon', 'bezier'."
             )
 
         self.setWindowTitle(f"Inserir Coordenadas - {self.mode.capitalize()}")
-        self.polygon_point_widgets: List[Tuple[QLineEdit, QLineEdit]] = []
+        # Renamed polygon_point_widgets to generic name
+        self.point_widgets: List[Tuple[QLineEdit, QLineEdit]] = []
         self._selected_color: QColor = QColor(Qt.black)
         # Validador que aceita ponto ou vírgula, dependendo do Locale
         self._double_validator = QDoubleValidator(-99999.99, 99999.99, 6, self)
@@ -51,14 +52,19 @@ class CoordinateInputDialog(QDialog):
             None  # Armazena dados validados no OK
         )
 
+        # Input fields (optional based on mode)
         self.x_input: Optional[QLineEdit] = None
         self.y_input: Optional[QLineEdit] = None
         self.x1_input: Optional[QLineEdit] = None
         self.y1_input: Optional[QLineEdit] = None
         self.x2_input: Optional[QLineEdit] = None
         self.y2_input: Optional[QLineEdit] = None
+        # Polygon/Bezier specific controls
         self.open_polygon_checkbox: Optional[QCheckBox] = None
         self.filled_polygon_checkbox: Optional[QCheckBox] = None
+        self.add_point_button: Optional[QPushButton] = None
+        self.scroll_area: Optional[QScrollArea] = None
+        self.point_list_layout: Optional[QVBoxLayout] = None # Layout inside scroll area
 
         self._setup_ui()
         self.setMinimumWidth(350)
@@ -81,7 +87,7 @@ class CoordinateInputDialog(QDialog):
         main_layout = QVBoxLayout(self)
 
         # --- Entradas de Coordenadas ---
-        input_container = QWidget()  # Container para inputs específicos do modo
+        input_container = QWidget()
         self.input_layout = QVBoxLayout(input_container)
         self.input_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -102,53 +108,51 @@ class CoordinateInputDialog(QDialog):
             self.y2_input = self._create_coord_input(p2_layout, "Y2:")
             p2_group.setLayout(p2_layout)
             self.input_layout.addWidget(p2_group)
-        elif self.mode == "polygon":
-            self.input_layout.addWidget(
-                QLabel("Vértices do Polígono (mínimo 3 para fechado, 2 para aberto):")
-            )
-            # ScrollArea para os pontos
-            scroll_area = QScrollArea()
-            scroll_area.setWidgetResizable(True)
-            scroll_area.setFixedHeight(180)
+
+        elif self.mode == "polygon" or self.mode == "bezier":
+            # Shared UI for Polygon and Bezier point lists
+            if self.mode == "polygon":
+                label_text = "Vértices do Polígono (mín. 3 fechado, 2 aberto):"
+                initial_points = 3
+            else: # Bezier
+                label_text = "Pontos de Controle Bézier (mín. 4, depois +3 por segmento):"
+                initial_points = 4
+
+            self.input_layout.addWidget(QLabel(label_text))
+
+            # ScrollArea for the points
+            self.scroll_area = QScrollArea()
+            self.scroll_area.setWidgetResizable(True)
+            self.scroll_area.setFixedHeight(180)
             scroll_content = QWidget()
-            self.polygon_points_layout = QVBoxLayout(
-                scroll_content
-            )  # Layout dentro da scroll area
-            self.polygon_points_layout.setSpacing(4)
-            scroll_area.setWidget(scroll_content)
-            self.input_layout.addWidget(scroll_area)
+            self.point_list_layout = QVBoxLayout(scroll_content)
+            self.point_list_layout.setSpacing(4)
+            self.scroll_area.setWidget(scroll_content)
+            self.input_layout.addWidget(self.scroll_area)
 
-            # Controles (aberto/fechado, adicionar ponto)
-            poly_options_layout = QHBoxLayout()
-            self.open_polygon_checkbox = QCheckBox("Polilinha (Aberta)")
-            self.open_polygon_checkbox.setToolTip(
-                "Marque para criar uma sequência de linhas abertas."
-            )
-            self.filled_polygon_checkbox = QCheckBox("Preenchido")
-            self.filled_polygon_checkbox.setToolTip(
-                "Marque para preencher o polígono (somente se fechado)."
-            )
-            self.open_polygon_checkbox.toggled.connect(
-                lambda checked: self.filled_polygon_checkbox.setDisabled(checked)
-            )
-            self.open_polygon_checkbox.toggled.connect(
-                lambda checked: (
-                    self.filled_polygon_checkbox.setChecked(False) if checked else None
-                )
-            )
+            # Options Layout
+            options_layout = QHBoxLayout()
 
-            poly_options_layout.addWidget(self.open_polygon_checkbox)
-            poly_options_layout.addWidget(self.filled_polygon_checkbox)
-            poly_options_layout.addStretch()
-            add_point_btn = QPushButton(self._get_icon("add.png"), " Vértice")
-            add_point_btn.setToolTip("Adicionar campos para mais um vértice")
-            add_point_btn.clicked.connect(self._add_polygon_point_inputs)
-            poly_options_layout.addWidget(add_point_btn)
-            self.input_layout.addLayout(poly_options_layout)
+            # Polygon specific options
+            if self.mode == "polygon":
+                self.open_polygon_checkbox = QCheckBox("Polilinha (Aberta)")
+                self.open_polygon_checkbox.setToolTip("Marque para criar uma sequência de linhas abertas.")
+                self.filled_polygon_checkbox = QCheckBox("Preenchido")
+                self.filled_polygon_checkbox.setToolTip("Marque para preencher o polígono (somente se fechado).")
+                self.open_polygon_checkbox.toggled.connect(self._on_polygon_open_toggled)
+                options_layout.addWidget(self.open_polygon_checkbox)
+                options_layout.addWidget(self.filled_polygon_checkbox)
 
-            # Adiciona os 3 primeiros campos de ponto
-            for _ in range(3):
-                self._add_polygon_point_inputs()
+            options_layout.addStretch()
+            self.add_point_button = QPushButton(self._get_icon("add.png"), " Ponto")
+            self.add_point_button.setToolTip("Adicionar campos para mais um ponto de controle/vértice")
+            self.add_point_button.clicked.connect(self._add_list_point_inputs)
+            options_layout.addWidget(self.add_point_button)
+            self.input_layout.addLayout(options_layout)
+
+            # Add initial point fields
+            for _ in range(initial_points):
+                self._add_list_point_inputs()
 
         main_layout.addWidget(input_container)
 
@@ -177,32 +181,36 @@ class CoordinateInputDialog(QDialog):
         btn_layout.addWidget(cancel_btn)
         main_layout.addLayout(btn_layout)
 
+    def _on_polygon_open_toggled(self, checked: bool):
+         """Callback when the 'open polygon' checkbox changes state."""
+         if self.filled_polygon_checkbox:
+              self.filled_polygon_checkbox.setDisabled(checked)
+              if checked:
+                   self.filled_polygon_checkbox.setChecked(False)
+
+
     def _create_coord_input(
         self, parent_layout: Union[QVBoxLayout, QHBoxLayout], label_text: str
     ) -> QLineEdit:
         """Cria um par QLabel/QLineEdit para uma coordenada."""
         h_layout = QHBoxLayout()
         label = QLabel(label_text)
-        label.setFixedWidth(50)  # Largura fixa pequena
+        label.setFixedWidth(50)
         input_field = QLineEdit()
         input_field.setValidator(self._double_validator)
         input_field.setPlaceholderText("Valor")
         input_field.setMinimumWidth(80)
-        input_field.setSizePolicy(
-            QSizePolicy.Expanding, QSizePolicy.Fixed
-        )  # Expande horizontalmente
+        input_field.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         h_layout.addWidget(label)
         h_layout.addWidget(input_field)
-        # Adiciona ao layout pai
         parent_layout.addLayout(h_layout)
         return input_field
 
-    def _add_polygon_point_inputs(self) -> None:
-        """Adiciona campos X, Y para um vértice de polígono."""
-        if self.mode != "polygon":
-            return
+    def _add_list_point_inputs(self) -> None:
+        """Adiciona campos X, Y para um ponto na lista (polígono/bezier)."""
+        if self.point_list_layout is None: return
 
-        point_index = len(self.polygon_point_widgets) + 1
+        point_index = len(self.point_widgets) + 1
         point_layout = QHBoxLayout()
         point_layout.setContentsMargins(0, 0, 0, 0)
         x_input = QLineEdit()
@@ -220,8 +228,8 @@ class CoordinateInputDialog(QDialog):
         point_layout.addWidget(x_input)
         point_layout.addWidget(y_input)
 
-        self.polygon_points_layout.addLayout(point_layout)
-        self.polygon_point_widgets.append((x_input, y_input))
+        self.point_list_layout.addLayout(point_layout)
+        self.point_widgets.append((x_input, y_input))
 
     def _choose_color(self) -> None:
         """Abre QColorDialog."""
@@ -244,12 +252,11 @@ class CoordinateInputDialog(QDialog):
     def _on_accept(self) -> None:
         """Valida os dados e, se OK, armazena e fecha."""
         try:
-            # Chama método de validação interno
             self._validated_data = self._validate_and_get_data()
-            self.accept()  # Fecha com status Accepted
+            self.accept()
         except ValueError as e:
             QMessageBox.warning(self, "Entrada Inválida", str(e))
-            self._validated_data = None  # Limpa dados em caso de erro
+            self._validated_data = None
 
     def _validate_and_get_data(self) -> Dict[str, Any]:
         """
@@ -258,90 +265,82 @@ class CoordinateInputDialog(QDialog):
         """
         data: Dict[str, Any] = {"coords": []}
         raw_texts: List[Tuple[Optional[str], Optional[str]]] = []
+        locale = self._double_validator.locale()
+        coords: List[Tuple[float, float]] = []
 
-        # 1. Coleta textos crus das entradas relevantes
         if self.mode == "point":
-            if self.x_input and self.y_input:
-                raw_texts = [(self.x_input.text(), self.y_input.text())]
-                if not all(raw_texts[0]):
-                    raise ValueError("Coordenadas X e Y são obrigatórias.")
-            else:
-                raise ValueError("Erro interno: Campos de ponto não inicializados.")
+            if not self.x_input or not self.y_input: raise ValueError("Campos de ponto ausentes.")
+            raw_texts = [(self.x_input.text(), self.y_input.text())]
+            if not all(raw_texts[0]): raise ValueError("Coordenadas X e Y são obrigatórias.")
+
         elif self.mode == "line":
-            if self.x1_input and self.y1_input and self.x2_input and self.y2_input:
-                raw_texts = [
-                    (self.x1_input.text(), self.y1_input.text()),
-                    (self.x2_input.text(), self.y2_input.text()),
-                ]
-                if not all(raw_texts[0]) or not all(raw_texts[1]):
-                    raise ValueError(
-                        "Todas as 4 coordenadas são obrigatórias para a linha."
-                    )
-            else:
-                raise ValueError("Erro interno: Campos de linha não inicializados.")
-        elif self.mode == "polygon":
-            if self.open_polygon_checkbox and self.filled_polygon_checkbox:
-                # Coleta apenas de campos preenchidos (X e Y)
-                for i, (x_input, y_input) in enumerate(self.polygon_point_widgets):
-                    x_text, y_text = x_input.text().strip(), y_input.text().strip()
-                    if x_text and y_text:
-                        raw_texts.append((x_text, y_text))
-                    elif x_text or y_text:  # Apenas um preenchido? Erro.
-                        raise ValueError(
-                            f"Vértice {i+1}: Preencha X e Y, ou deixe ambos em branco."
-                        )
+            if not self.x1_input or not self.y1_input or not self.x2_input or not self.y2_input:
+                raise ValueError("Campos de linha ausentes.")
+            raw_texts = [
+                (self.x1_input.text(), self.y1_input.text()),
+                (self.x2_input.text(), self.y2_input.text()),
+            ]
+            if not all(raw_texts[0]) or not all(raw_texts[1]):
+                raise ValueError("Todas as 4 coordenadas são obrigatórias para a linha.")
+
+        elif self.mode == "polygon" or self.mode == "bezier":
+            # Collect non-empty pairs from the list
+            for i, (x_input, y_input) in enumerate(self.point_widgets):
+                x_text, y_text = x_input.text().strip(), y_input.text().strip()
+                if x_text and y_text:
+                    raw_texts.append((x_text, y_text))
+                elif x_text or y_text:
+                    raise ValueError(f"Ponto {i+1}: Preencha X e Y, ou deixe ambos em branco.")
+
+            num_points_collected = len(raw_texts)
+
+            if self.mode == "polygon":
+                if not self.open_polygon_checkbox or not self.filled_polygon_checkbox:
+                     raise ValueError("Controles de polígono ausentes.")
                 data["is_open"] = self.open_polygon_checkbox.isChecked()
                 data["is_filled"] = (
                     self.filled_polygon_checkbox.isChecked() and not data["is_open"]
                 )
-
                 min_points = 2 if data["is_open"] else 3
-                if len(raw_texts) < min_points:
+                if num_points_collected < min_points:
                     tipo = "aberto" if data["is_open"] else "fechado"
                     raise ValueError(
-                        f"Polígono {tipo} requer pelo menos {min_points} vértices preenchidos ({len(raw_texts)} encontrados)."
+                        f"Polígono {tipo} requer pelo menos {min_points} vértices preenchidos ({num_points_collected} encontrados)."
                     )
-            else:
-                raise ValueError("Erro interno: Campos de polígono não inicializados.")
+            else: # Bezier validation
+                min_points = 4
+                if num_points_collected < min_points:
+                    raise ValueError(f"Curva de Bézier requer pelo menos {min_points} pontos ({num_points_collected} encontrados).")
+                if num_points_collected > min_points and (num_points_collected - min_points) % 3 != 0:
+                    raise ValueError(
+                       f"Número inválido de pontos ({num_points_collected}) para curva Bézier composta. "
+                       "Deve ser 4 ou 7 ou 10 etc. (4 + 3*N)."
+                    )
 
-        # 2. Converte textos para float
-        coords: List[Tuple[float, float]] = []
-        locale = self._double_validator.locale()  # Usa o mesmo locale do validador
+        # Convert texts to float using locale
         for i, (x_text_raw, y_text_raw) in enumerate(raw_texts):
-            if x_text_raw is None or y_text_raw is None:
-                continue  # Segurança
+            if x_text_raw is None or y_text_raw is None: continue # Should not happen
 
             x_conv, x_ok = locale.toDouble(x_text_raw)
             y_conv, y_ok = locale.toDouble(y_text_raw)
 
             if not x_ok or not y_ok:
-                p_desc = (
-                    f"Vértice {i+1}"
-                    if self.mode == "polygon"
-                    else (
-                        ("Inicial" if i == 0 else "Final")
-                        if self.mode == "line"
-                        else "Ponto"
-                    )
-                )
-                raise ValueError(
-                    f"{p_desc}: Coordenadas '{x_text_raw}', '{y_text_raw}' inválidas. Use números."
-                )
+                p_desc = f"Ponto {i+1}" # Default description
+                if self.mode == "line": p_desc = "Inicial" if i == 0 else "Final"
+                elif self.mode == "point": p_desc = "Ponto"
+                raise ValueError(f"{p_desc}: Coordenadas '{x_text_raw}', '{y_text_raw}' inválidas.")
             coords.append((x_conv, y_conv))
 
-        # 3. Validações adicionais
+        # Additional validations
         if self.mode == "line" and len(coords) == 2 and coords[0] == coords[1]:
             raise ValueError("Pontos inicial e final da linha não podem ser idênticos.")
 
-        # 4. Preenche dicionário de dados
+        # Fill data dictionary
         data["coords"] = coords
-        data["color"] = (
-            self._selected_color if self._selected_color.isValid() else QColor(Qt.black)
-        )
+        data["color"] = self._selected_color if self._selected_color.isValid() else QColor(Qt.black)
 
         return data
 
     def get_validated_data(self) -> Optional[Dict[str, Any]]:
         """Retorna os dados validados se o diálogo foi aceito, senão None."""
-        # Retorna os dados armazenados em _on_accept se o diálogo foi aceito
         return self._validated_data if self.result() == QDialog.Accepted else None

@@ -56,8 +56,9 @@ class GraphicsView(QGraphicsView):
             QGraphicsView.DontAdjustForAntialiasing, True
         )  # Opcional: performance
         self.setViewportUpdateMode(
-            QGraphicsView.FullViewportUpdate
-        )  # Pode ajudar com rotação
+            QGraphicsView.FullViewportUpdate  # Needed for smooth rotation/zoom
+            # QGraphicsView.BoundingRectViewportUpdate # More performant but can have artifacts
+        )
 
     # --- Getters ---
     def get_scale(self) -> float:
@@ -91,28 +92,30 @@ class GraphicsView(QGraphicsView):
         )
         current_anchor = self.transformationAnchor()  # Salva o anchor atual
         self.setTransformationAnchor(anchor)
+        # Apply scale using QGraphicsView's scale method
         self.scale(scale_factor, scale_factor)
         self.setTransformationAnchor(current_anchor)  # Restaura anchor
 
         self.scale_changed.emit()  # Notifica a UI
 
-    def set_rotation_angle(self, angle: float, center_on_view: bool = True):
+    def set_rotation_angle(self, angle: float):
         """Define o ângulo de rotação da view em graus."""
-        # Normaliza ângulo para [-180, 180) para consistência (opcional)
-        # angle = ((angle + 180.0) % 360.0) - 180.0
-        # Ou mantém acumulado como está
+        # Normaliza ângulo para [-180, 180) para consistência interna (opcional)
+        # normalized_angle = ((angle + 180.0) % 360.0) - 180.0
+        # Ou mantém acumulado como está, que é o comportamento do QGraphicsView.rotate
 
         if abs(self._current_rotation - angle) < 1e-6:
             return  # Sem mudança
 
         delta_angle = angle - self._current_rotation
-        self._current_rotation = angle
+        self._current_rotation = angle  # Store the absolute angle
 
-        # Define o ponto de ancoragem para rotação
-        anchor = QGraphicsView.AnchorViewCenter  # Centro da view é mais comum
+        # Define o ponto de ancoragem para rotação (centro da view é mais comum)
+        anchor = QGraphicsView.AnchorViewCenter
         current_anchor = self.transformationAnchor()
         self.setTransformationAnchor(anchor)
-        self.rotate(delta_angle)  # Aplica rotação incremental
+        # Apply incremental rotation using QGraphicsView's rotate method
+        self.rotate(delta_angle)
         self.setTransformationAnchor(current_anchor)
 
         self.rotation_changed.emit()  # Notifica a UI
@@ -125,9 +128,10 @@ class GraphicsView(QGraphicsView):
         elif mode == QGraphicsView.RubberBandDrag:
             self.setCursor(Qt.ArrowCursor)
         elif mode == QGraphicsView.NoDrag:
-            self.setCursor(Qt.CrossCursor)  # Cursor para desenho
+            # Use CrossCursor for drawing modes
+            self.setCursor(Qt.CrossCursor)
         else:
-            self.setCursor(Qt.ArrowCursor)
+            self.setCursor(Qt.ArrowCursor)  # Default
 
     # --- Event Handlers ---
 
@@ -141,20 +145,23 @@ class GraphicsView(QGraphicsView):
                 self._last_pan_point = event.pos()
                 self.setCursor(Qt.ClosedHandCursor)
                 event.accept()
-            else:
-                # Emite sinal para editor e passa para base (seleção/etc)
+            elif self.dragMode() == QGraphicsView.NoDrag:
+                # Emit signal for drawing modes
+                self.scene_left_clicked.emit(scene_pos)
+                event.accept()  # Consume event, don't pass to base for NoDrag
+            else:  # RubberBandDrag or others
+                # Emit signal for potential selection start AND pass to base
                 self.scene_left_clicked.emit(scene_pos)
                 super().mousePressEvent(event)
 
         elif event.button() == Qt.RightButton:
-            # Emite sinal para editor (ex: finalizar polígono)
-            # Não inicia pan com botão direito por padrão
+            # Emit signal for editor (e.g., finish polygon/bezier)
             self.scene_right_clicked.emit(scene_pos)
-            # Não passa para base para evitar menu de contexto padrão da QGraphicsView
+            # Don't pass to base to prevent default context menu of QGraphicsView
             event.accept()
 
         elif event.button() == Qt.MiddleButton:
-            # Inicia pan com botão do meio, independente do dragMode
+            # Always initiate pan with middle button, regardless of dragMode
             self._is_panning = True
             self._last_pan_point = event.pos()
             self.setCursor(Qt.ClosedHandCursor)
@@ -165,19 +172,21 @@ class GraphicsView(QGraphicsView):
     def mouseMoveEvent(self, event: QMouseEvent):
         """Captura movimento para pan ou emissão de posição."""
         scene_pos = self.mapToScene(event.pos())
+        # Always emit mouse move for status bar coordinates etc.
+        self.scene_mouse_moved.emit(scene_pos)
 
         if self._is_panning:
             delta = event.pos() - self._last_pan_point
             self._last_pan_point = event.pos()
-            # Translada a view movendo as scrollbars internas
+            # Translate the view by adjusting the scrollbars
             h_bar = self.horizontalScrollBar()
             v_bar = self.verticalScrollBar()
             h_bar.setValue(h_bar.value() - delta.x())
             v_bar.setValue(v_bar.value() - delta.y())
             event.accept()
         else:
-            # Emite posição para editor (preview) e passa para base (rubberband)
-            self.scene_mouse_moved.emit(scene_pos)
+            # If not panning, pass event to base class for selection (RubberBandDrag)
+            # or drawing preview (NoDrag, handled by Editor via scene_mouse_moved signal)
             super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event: QMouseEvent):
@@ -186,7 +195,7 @@ class GraphicsView(QGraphicsView):
             event.button() == Qt.LeftButton or event.button() == Qt.MiddleButton
         ):
             self._is_panning = False
-            # Restaura cursor correto para o modo atual
+            # Restore cursor based on current drag mode
             self.set_drag_mode(self.dragMode())
             event.accept()
         else:
@@ -199,36 +208,39 @@ class GraphicsView(QGraphicsView):
             event.ignore()
             return
 
-        # Fator de zoom exponencial para sensação mais natural
+        # Exponential zoom factor for a smoother feel
         zoom_factor = 1.0 + (self._zoom_sensitivity * (delta / 120.0))
         new_scale = self._current_scale * zoom_factor
-        self.set_scale(new_scale, center_on_mouse=True)  # set_scale aplica limites
+        # Use set_scale which applies limits and emits signal
+        self.set_scale(new_scale, center_on_mouse=True)
         event.accept()
 
     def keyPressEvent(self, event: QKeyEvent):
         """Captura teclas para rotação (Shift+Setas) e deleção (Delete/Backspace)."""
-        # Rotação com Shift + Setas
+        # Rotation with Shift + Arrow Keys
         if event.modifiers() & Qt.ShiftModifier:
             angle_delta = 0.0
             if event.key() == Qt.Key_Left:
                 angle_delta = -self._rotation_step
             elif event.key() == Qt.Key_Right:
                 angle_delta = self._rotation_step
-            # elif event.key() == Qt.Key_Up: angle_delta = self._rotation_step # Opcional
-            # elif event.key() == Qt.Key_Down: angle_delta = -self._rotation_step # Opcional
+            # Optional: Up/Down for rotation
+            # elif event.key() == Qt.Key_Up: angle_delta = self._rotation_step
+            # elif event.key() == Qt.Key_Down: angle_delta = -self._rotation_step
 
             if angle_delta != 0.0:
+                # Apply rotation via setter which handles signals
                 self.set_rotation_angle(self._current_rotation + angle_delta)
                 event.accept()
                 return
 
-        # Deleção
+        # Deletion Request
         if event.key() == Qt.Key_Delete or event.key() == Qt.Key_Backspace:
             self.delete_requested.emit()
             event.accept()
             return
 
-        # Passa outras teclas para a classe base
+        # Pass other key events to the base class (e.g., for item navigation)
         super().keyPressEvent(event)
 
     # --- Métodos de Controle ---
@@ -238,17 +250,22 @@ class GraphicsView(QGraphicsView):
         old_scale = self._current_scale
         old_rotation = self._current_rotation
 
-        self.setTransform(QTransform())  # Reseta TUDO (zoom, pan, rotação)
+        # Reset transformation matrix completely
+        self.setTransform(QTransform())
 
         self._current_scale = 1.0
         self._current_rotation = 0.0
         self._is_panning = False
 
-        # Emite sinais apenas se houve mudança real para atualizar UI
+        # Ensure cursor is appropriate for the default mode (likely RubberBandDrag)
+        self.set_drag_mode(self.dragMode())
+
+        # Emit signals only if there was an actual change to update UI
         if abs(old_scale - 1.0) > 1e-6:
             self.scale_changed.emit()
         if abs(old_rotation - 0.0) > 1e-6:
             self.rotation_changed.emit()
 
-        self.centerOn(0, 0)  # Centraliza a vista na origem da cena
-        self.viewport().update()  # Redesenha
+        # Optionally center on a specific point (e.g., origin)
+        # self.centerOn(0, 0)
+        self.viewport().update()  # Force redraw

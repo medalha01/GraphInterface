@@ -19,7 +19,7 @@ class Polygon:
         points: List[Point],
         is_open: bool = False,
         color: Optional[QColor] = None,
-        is_filled: bool = False,  # Added: Fill status
+        is_filled: bool = False,
     ):
         """
         Inicializa um polígono ou polilinha.
@@ -27,6 +27,7 @@ class Polygon:
             points: Lista ordenada de vértices (objetos Point).
             is_open: True para polilinha, False para polígono fechado.
             color: Cor da borda/linha.
+            is_filled: True para preencher polígono fechado. Ignorado se is_open=True.
         """
         if not isinstance(points, list) or not all(
             isinstance(p, Point) for p in points
@@ -44,6 +45,7 @@ class Polygon:
 
         self.points: List[Point] = points
         self.is_open: bool = is_open
+        # Fill is only possible if closed
         self.is_filled: bool = is_filled if not is_open else False
         self.color: QColor = (
             color if isinstance(color, QColor) and color.isValid() else QColor(Qt.black)
@@ -57,22 +59,21 @@ class Polygon:
 
         # Aparência (Caneta e Pincel)
         pen = QPen(self.color, self.GRAPHICS_BORDER_WIDTH)
-        brush = QBrush()
+        brush = QBrush()  # Default NoBrush
 
         if self.is_open:  # Polilinha
-            pen.setStyle(Qt.DashLine)
+            pen.setStyle(Qt.DashLine)  # Dashed line for open polygon (polyline)
             brush.setStyle(Qt.NoBrush)
         else:  # Polígono Fechado
             pen.setStyle(Qt.SolidLine)
             if self.is_filled:
                 brush.setStyle(Qt.SolidPattern)
                 fill_color = QColor(self.color)
-                fill_color.setAlphaF(self.GRAPHICS_FILL_ALPHA)  # Aplica transparência
+                # Apply transparency for fill
+                fill_color.setAlphaF(self.GRAPHICS_FILL_ALPHA)
                 brush.setColor(fill_color)
             else:
-                brush.setStyle(
-                    Qt.NoBrush
-                )  # Explicitly NoBrush if closed but not filled
+                brush.setStyle(Qt.NoBrush)  # Explicitly NoBrush
 
         polygon_item.setPen(pen)
         polygon_item.setBrush(brush)
@@ -81,7 +82,7 @@ class Polygon:
         polygon_item.setFlag(QGraphicsItem.ItemIsSelectable)
         # polygon_item.setFlag(QGraphicsItem.ItemIsMovable)
 
-        # Associa dados
+        # Associa dados (self = Polygon object)
         polygon_item.setData(0, self)
         return polygon_item
 
@@ -92,7 +93,7 @@ class Polygon:
     def get_center(self) -> Tuple[float, float]:
         """Retorna o centroide (média aritmética dos vértices)."""
         if not self.points:
-            return (0.0, 0.0)  # Caso impossível devido ao __init__
+            return (0.0, 0.0)  # Should not happen due to __init__ validation
         sum_x = sum(p.x for p in self.points)
         sum_y = sum(p.y for p in self.points)
         count = len(self.points)

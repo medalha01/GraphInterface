@@ -37,7 +37,7 @@ class Line:
 
         # Flags
         line_item.setFlag(QGraphicsItem.ItemIsSelectable)
-        line_item.setFlag(QGraphicsItem.ItemIsMovable)
+        # line_item.setFlag(QGraphicsItem.ItemIsMovable)
 
         # Associa dados
         line_item.setData(0, self)

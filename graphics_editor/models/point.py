@@ -1,3 +1,4 @@
+# point.py
 # graphics_editor/models/point.py
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QPen, QBrush, QColor
@@ -39,9 +40,7 @@ class Point:
 
         # Flags para interação
         point_item.setFlag(QGraphicsItem.ItemIsSelectable)
-        # point_item.setFlag(
-        #    QGraphicsItem.ItemIsMovable
-        # )  # Permite mover com ferramentas de seleção
+        # point_item.setFlag(QGraphicsItem.ItemIsMovable) # Allow move
 
         # Associa este objeto de dados ao item gráfico (chave 0)
         point_item.setData(0, self)
