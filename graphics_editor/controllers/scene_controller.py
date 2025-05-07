@@ -8,23 +8,23 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QObject, pyqtSignal, QRectF, QLineF
 from PyQt5.QtGui import QColor, QPen, QBrush, QPolygonF, QPainterPath
 
-# Import necessary components
-from ..models import Point, Line, Polygon, BezierCurve, __all__ as ModelNames
+from ..models import Point, Line, Polygon, BezierCurve
+# Correct way to import all model names for DATA_OBJECT_TYPES tuple creation
+from ..models import __all__ as model_names_list # Get the list of names
+# Dynamically create DATA_OBJECT_TYPES
+# This assumes your models.__init__.py correctly populates __all__
+# and that models are in graphics_editor.models
+_models_module = __import__('graphics_editor.models', fromlist=model_names_list)
+DATA_OBJECT_TYPES = tuple(getattr(_models_module, name) for name in model_names_list)
+
+
 from ..state_manager import EditorStateManager, LineClippingAlgorithm
 from ..utils import clipping as clp
 
-# Alias for DataObject types
 DataObject = Union[Point, Line, Polygon, BezierCurve]
-DATA_OBJECT_TYPES = tuple(__import__('graphics_editor.models', fromlist=ModelNames).__dict__[name] for name in ModelNames)
 
 
 class SceneController(QObject):
-    """
-    Manages the QGraphicsScene content, mapping DataObjects to QGraphicsItems,
-    handling clipping, adding, removing, and updating items.
-    """
-    # Signal emitted when the scene content is modified (add, remove, clear, update)
-    # The boolean indicates if the modification should potentially trigger an 'unsaved changes' state.
     scene_modified = pyqtSignal(bool)
 
     def __init__(self, scene: QGraphicsScene, state_manager: EditorStateManager, parent: Optional[QObject] = None):
@@ -33,145 +33,144 @@ class SceneController(QObject):
         self._state_manager = state_manager
         self._data_object_to_item_map: Dict[DataObject, QGraphicsItem] = {}
 
-        # Store clipping configuration locally, updated via signals
         self._clip_rect_tuple: clp.ClipRect = self._get_clip_rect_tuple()
         self._clipper_func = self._get_clipper_function()
-
-        # Configuration (can be passed in __init__ or fetched from config later)
-        # TODO: Fetch from a config/settings manager or pass via constructor
         self.bezier_clipping_samples = 20
 
-        # Connect to state changes relevant to clipping
         self._state_manager.clip_rect_changed.connect(self._update_clipper_state)
         self._state_manager.line_clipper_changed.connect(self._update_clipper_state)
 
-    # --- Internal State Updaters ---
-
     def _update_clipper_state(self):
-        """Updates internal clipping parameters when state manager signals change."""
         self._clip_rect_tuple = self._get_clip_rect_tuple()
         self._clipper_func = self._get_clipper_function()
-        # Optional: Re-clip all items if viewport changes dynamically? Complex.
 
     def _get_clip_rect_tuple(self) -> clp.ClipRect:
-        """Gets the clipping rectangle tuple from the state manager."""
-        rect = self._state_manager.clip_rect() # Already normalized
+        rect = self._state_manager.clip_rect()
         return (rect.left(), rect.top(), rect.right(), rect.bottom())
 
     def _get_clipper_function(self):
-        """Gets the appropriate line clipping function based on state."""
         algo = self._state_manager.selected_line_clipper()
         return clp.cohen_sutherland if algo == LineClippingAlgorithm.COHEN_SUTHERLAND else clp.liang_barsky
 
-    # --- Clipping Logic ---
+    def _is_bezier_fully_inside(self, bezier: BezierCurve, clip_rect_tuple: clp.ClipRect) -> bool:
+        if not bezier.points:
+            return False
+        for cp_model in bezier.points:
+            if clp.clip_point(cp_model.get_coords(), clip_rect_tuple) is None:
+                return False 
+        return True 
 
     def _clip_data_object(self, data_object: DataObject) -> Tuple[Optional[DataObject], bool]:
-        """
-        Clips a DataObject against the current viewport.
-        Returns (clipped_object, needs_replacement).
-        """
         clipped_result: Optional[DataObject] = None
-        needs_replacement = False
-        clip_rect = self._clip_rect_tuple
+        needs_replacement = False 
+        clip_rect_tuple = self._clip_rect_tuple 
         line_clipper = self._clipper_func
 
         try:
             if isinstance(data_object, Point):
-                clipped_coords = clp.clip_point(data_object.get_coords(), clip_rect)
+                clipped_coords = clp.clip_point(data_object.get_coords(), clip_rect_tuple)
                 if clipped_coords:
                     clipped_result = Point(clipped_coords[0], clipped_coords[1], data_object.color)
             elif isinstance(data_object, Line):
-                clipped_segment = line_clipper(data_object.start.get_coords(), data_object.end.get_coords(), clip_rect)
-                if clipped_segment:
-                    p1, p2 = clipped_segment
-                    start_pt = Point(p1[0], p1[1], data_object.color)
-                    end_pt = Point(p2[0], p2[1], data_object.color)
+                clipped_segment_coords = line_clipper(data_object.start.get_coords(), data_object.end.get_coords(), clip_rect_tuple)
+                if clipped_segment_coords:
+                    p1_coords, p2_coords = clipped_segment_coords
+                    start_pt = Point(p1_coords[0], p1_coords[1], data_object.color)
+                    end_pt = Point(p2_coords[0], p2_coords[1], data_object.color)
                     clipped_result = Line(start_pt, end_pt, data_object.color)
             elif isinstance(data_object, Polygon):
-                clipped_vertices_coords = clp.sutherland_hodgman(data_object.get_coords(), clip_rect)
-                min_points = 2 if data_object.is_open else 3
-                if len(clipped_vertices_coords) >= min_points:
-                    clipped_points = [Point(x, y, data_object.color) for x, y in clipped_vertices_coords]
-                    clipped_result = Polygon(
-                        clipped_points, is_open=data_object.is_open,
-                        color=data_object.color, is_filled=data_object.is_filled
-                    )
+                is_fully_inside = True
+                for p_coord in data_object.get_coords():
+                    if clp.clip_point(p_coord, clip_rect_tuple) is None:
+                        is_fully_inside = False
+                        break
+                
+                if is_fully_inside and not data_object.is_open: 
+                    clipped_result = data_object 
+                    needs_replacement = False
+                else:
+                    clipped_vertices_coords = clp.sutherland_hodgman(data_object.get_coords(), clip_rect_tuple)
+                    min_points = 2 if data_object.is_open else 3
+                    if len(clipped_vertices_coords) >= min_points:
+                        clipped_points_models = [Point(x, y, data_object.color) for x, y in clipped_vertices_coords]
+                        clipped_result = Polygon(
+                            clipped_points_models, is_open=data_object.is_open,
+                            color=data_object.color, is_filled=data_object.is_filled
+                        )
+                        if len(clipped_points_models) != len(data_object.points):
+                            needs_replacement = True 
+            
             elif isinstance(data_object, BezierCurve):
-                sampled_points = data_object.sample_curve(self.bezier_clipping_samples)
-                if len(sampled_points) < 2: return None, False
+                if self._is_bezier_fully_inside(data_object, clip_rect_tuple):
+                    clipped_result = data_object 
+                    needs_replacement = False
+                else:
+                    sampled_qpoints = data_object.sample_curve(self.bezier_clipping_samples)
+                    if len(sampled_qpoints) < 2: 
+                        clipped_result = None
+                        needs_replacement = True 
+                    else:
+                        raw_polyline_coords: List[Tuple[float, float]] = [
+                            (qp.x(), qp.y()) for qp in sampled_qpoints
+                        ]
+                        clipped_sh_coords = clp.sutherland_hodgman(raw_polyline_coords, clip_rect_tuple)
 
-                clipped_polyline_points: List[Point] = []
-                for i in range(len(sampled_points) - 1):
-                     p1 = (sampled_points[i].x(), sampled_points[i].y())
-                     p2 = (sampled_points[i+1].x(), sampled_points[i+1].y())
-                     clipped_segment = line_clipper(p1, p2, clip_rect)
-                     if clipped_segment:
-                          start_pt = Point(clipped_segment[0][0], clipped_segment[0][1], data_object.color)
-                          end_pt = Point(clipped_segment[1][0], clipped_segment[1][1], data_object.color)
-                          # Add points, avoiding duplicates for connected segments inside
-                          if not clipped_polyline_points or not (
-                              math.isclose(clipped_polyline_points[-1].x, start_pt.x) and
-                              math.isclose(clipped_polyline_points[-1].y, start_pt.y)):
-                               clipped_polyline_points.append(start_pt)
-                          if not (math.isclose(start_pt.x, end_pt.x) and math.isclose(start_pt.y, end_pt.y)):
-                              clipped_polyline_points.append(end_pt)
-
-                if len(clipped_polyline_points) >= 2:
-                     # Result is an open Polygon
-                     clipped_result = Polygon(clipped_polyline_points, is_open=True, color=data_object.color)
-                     needs_replacement = True # Type changed
-
+                        if len(clipped_sh_coords) >= 2:
+                            clipped_points_models = [
+                                Point(x, y, data_object.color) for x, y in clipped_sh_coords
+                            ]
+                            clipped_result = Polygon(
+                                clipped_points_models,
+                                is_open=True,
+                                color=data_object.color,
+                                is_filled=False
+                            )
+                            needs_replacement = True  
+                        else: 
+                            clipped_result = None
+                            needs_replacement = True 
+            
             return clipped_result, needs_replacement
 
         except Exception as e:
             print(f"Error during clipping of {type(data_object).__name__}: {e}")
-            return None, False
-
-    # --- Scene Modification Methods ---
+            return None, False 
 
     def add_object(self, data_object: DataObject, mark_modified: bool = True):
-        """Clips a DataObject and adds its graphical representation to the scene and map."""
         if not isinstance(data_object, DATA_OBJECT_TYPES):
             print(f"Warning: Attempted to add unsupported object type {type(data_object)}")
             return
 
-        clipped_data_object, _ = self._clip_data_object(data_object) # Ignore replacement flag for new objects
+        clipped_data_object, _ = self._clip_data_object(data_object) 
 
         if clipped_data_object:
             try:
                 graphics_item = clipped_data_object.create_graphics_item()
-                graphics_item.setData(0, clipped_data_object) # Associate clipped data
+                graphics_item.setData(0, clipped_data_object) 
                 self._scene.addItem(graphics_item)
                 self._data_object_to_item_map[clipped_data_object] = graphics_item
                 if mark_modified:
-                    self.scene_modified.emit(True) # Signal modification
+                    self.scene_modified.emit(True) 
             except Exception as e:
-                 # Use a more informative error message if possible
                  QMessageBox.critical(None, "Erro ao Adicionar Item",
                      f"Não foi possível criar item gráfico para {type(clipped_data_object).__name__}: {e}")
 
-
     def remove_items(self, items_to_remove: List[QGraphicsItem], mark_modified: bool = True) -> int:
-        """Removes specified QGraphicsItems from the scene and the lookup map."""
         items_removed_count = 0
         for item in items_to_remove:
-            if item and item.scene(): # Check if item exists and is in the scene
-                data_obj = self.get_object_for_item(item)
-                # Remove from map first
+            if item and item.scene(): 
+                data_obj = self.get_object_for_item(item) # FIXED: Added get_object_for_item method
                 if data_obj is not None and data_obj in self._data_object_to_item_map:
                     del self._data_object_to_item_map[data_obj]
-                # Remove from scene
                 self._scene.removeItem(item)
                 items_removed_count += 1
 
         if items_removed_count > 0 and mark_modified:
-            self.scene_modified.emit(True) # Signal modification
+            self.scene_modified.emit(True) 
 
         return items_removed_count
 
     def clear_scene(self, mark_modified: bool = True):
-        """Removes all managed items from the scene and clears the map."""
-        # Get items from map values before clearing
         items_to_remove = list(self._data_object_to_item_map.values())
         for item in items_to_remove:
             if item and item.scene():
@@ -181,72 +180,48 @@ class SceneController(QObject):
         self._data_object_to_item_map.clear()
 
         if cleared_count > 0 and mark_modified:
-             self.scene_modified.emit(True) # Signal modification
+             self.scene_modified.emit(True) 
 
     def update_object_item(self, modified_data_object: DataObject, mark_modified: bool = True):
-        """
-        Handles updates to an object after modification (e.g., transformation).
-        Re-clips the object and updates or replaces the corresponding QGraphicsItem.
-        """
         if not isinstance(modified_data_object, DATA_OBJECT_TYPES):
             print(f"Warning: update_object_item called with invalid type {type(modified_data_object)}")
             return
 
-        # Find the graphics item associated with the *original* (pre-modification) object identity
-        # This assumes the `modified_data_object` reference is still the same instance that was transformed.
-        graphics_item = self.get_item_for_object(modified_data_object)
+        graphics_item = self.get_item_for_object(modified_data_object) # FIXED: Added get_item_for_object method
 
         if not graphics_item or not graphics_item.scene():
-            # Item might have been deleted concurrently
-            # Or the object reference changed unexpectedly (less likely if modified in-place)
             print(f"Warning: Graphics item for {modified_data_object} not found or not in scene during update.")
-            # If the data object *instance* changed, the map lookup will fail.
-            # Need a way to handle this if objects are recreated instead of modified in-place.
             return
 
-        # Re-clip the *already modified* data object
         clipped_data_object, needs_replacement = self._clip_data_object(modified_data_object)
 
         try:
             if clipped_data_object is None:
-                # Object is now completely outside the viewport
-                self.remove_items([graphics_item], mark_modified=mark_modified) # Remove from scene and map
+                self.remove_items([graphics_item], mark_modified=mark_modified) 
             elif needs_replacement:
-                # Type changed during clipping (e.g., Bezier -> Polygon)
-                # Remove old item/map entry
                 if modified_data_object in self._data_object_to_item_map:
                     del self._data_object_to_item_map[modified_data_object]
                 self._scene.removeItem(graphics_item)
-                # Add the new clipped object (creates item, adds to scene/map)
                 self.add_object(clipped_data_object, mark_modified=mark_modified)
             else:
-                # Object clipped (or not) but type remains the same - update in place
                 graphics_item.prepareGeometryChange()
-
-                # Check if clipping returned a *new* object instance (even if same type)
                 if clipped_data_object is not modified_data_object:
-                    # Update map: remove old key, add new key pointing to the same item
                     if modified_data_object in self._data_object_to_item_map:
                         del self._data_object_to_item_map[modified_data_object]
                     self._data_object_to_item_map[clipped_data_object] = graphics_item
-                    # Update the item's associated data pointer
                     graphics_item.setData(0, clipped_data_object)
 
-                # Update item's visual representation based on the (potentially new) clipped data
                 self._update_graphics_item_geometry(graphics_item, clipped_data_object)
                 self._apply_style_to_item(graphics_item, clipped_data_object)
-                graphics_item.update() # Request redraw
+                graphics_item.update() 
                 if mark_modified:
-                    self.scene_modified.emit(True) # Signal modification
+                    self.scene_modified.emit(True) 
 
         except Exception as e:
              QMessageBox.critical(None, "Erro ao Atualizar Item",
                  f"Falha ao atualizar item {type(graphics_item).__name__} pós-modificação: {e}")
 
-    # --- Internal Graphics Item Updates ---
-
     def _update_graphics_item_geometry(self, item: QGraphicsItem, data: DataObject):
-        """Updates the geometry of a QGraphicsItem based on its DataObject."""
         try:
             if isinstance(data, Point) and isinstance(item, QGraphicsEllipseItem):
                 size, offset = data.GRAPHICS_SIZE, data.GRAPHICS_SIZE / 2.0
@@ -259,9 +234,11 @@ class SceneController(QObject):
                 new_polygon_qf = QPolygonF([p.to_qpointf() for p in data.points])
                 if item.polygon() != new_polygon_qf: item.setPolygon(new_polygon_qf)
             elif isinstance(data, Polygon) and isinstance(item, QGraphicsPathItem):
-                 # Handle Polygon data associated with a PathItem (e.g., clipped Bezier)
                  new_path = QPainterPath()
-                 if data.points: new_path.addPolygon(QPolygonF([p.to_qpointf() for p in data.points]))
+                 if data.points and len(data.points) > 0: 
+                     new_path.moveTo(data.points[0].to_qpointf())
+                     for p_model in data.points[1:]:
+                         new_path.lineTo(p_model.to_qpointf())
                  if item.path() != new_path: item.setPath(new_path)
             elif isinstance(data, BezierCurve) and isinstance(item, QGraphicsPathItem):
                  new_path = QPainterPath()
@@ -280,13 +257,11 @@ class SceneController(QObject):
             print(f"ERROR in _update_graphics_item_geometry for {type(data)}/{type(item)}: {e}")
 
     def _apply_style_to_item(self, item: QGraphicsItem, data: DataObject):
-        """Applies the style (pen, brush) from the DataObject to the QGraphicsItem."""
         if not hasattr(data, "color"): return
         color = data.color if isinstance(data.color, QColor) and data.color.isValid() else QColor(Qt.black)
-        pen = QPen(Qt.NoPen) # Default
-        brush = QBrush(Qt.NoBrush) # Default
+        pen = QPen(Qt.NoPen) 
+        brush = QBrush(Qt.NoBrush) 
 
-        # Determine style based on data type
         if isinstance(data, Point):
             pen = QPen(color, 1)
             brush = QBrush(color)
@@ -295,7 +270,7 @@ class SceneController(QObject):
         elif isinstance(data, Polygon):
             pen = QPen(color, data.GRAPHICS_BORDER_WIDTH)
             if data.is_open: pen.setStyle(Qt.DashLine)
-            else: # Closed
+            else: 
                 pen.setStyle(Qt.SolidLine)
                 if data.is_filled:
                     brush.setStyle(Qt.SolidPattern)
@@ -303,42 +278,39 @@ class SceneController(QObject):
                     brush.setColor(fill_color)
         elif isinstance(data, BezierCurve):
             pen = QPen(color, data.GRAPHICS_WIDTH, Qt.SolidLine)
+            pen.setJoinStyle(Qt.RoundJoin)
+            pen.setCapStyle(Qt.RoundCap)
 
-        # Apply if supported and different from current
         if hasattr(item, "setPen") and item.pen() != pen: item.setPen(pen)
         if hasattr(item, "setBrush") and item.brush() != brush: item.setBrush(brush)
 
-
-    # --- Lookup and Access Methods ---
-
+    # --- ADDED LOOKUP METHODS ---
     def get_item_for_object(self, data_object: DataObject) -> Optional[QGraphicsItem]:
         """Retrieves the QGraphicsItem associated with a DataObject."""
         return self._data_object_to_item_map.get(data_object)
 
     def get_object_for_item(self, item: QGraphicsItem) -> Optional[DataObject]:
         """Retrieves the DataObject associated with a QGraphicsItem."""
-        # Check if the item is in our map's values first for efficiency?
-        # Or rely solely on item.data(0)
         data = item.data(0)
         if isinstance(data, DATA_OBJECT_TYPES):
-            # Verify it's actually in our map (consistency check)
+            # Optional: Consistency check if the item is indeed the one in the map for this data object
             # if data in self._data_object_to_item_map and self._data_object_to_item_map[data] is item:
             #     return data
-            # else:
-            #     print(f"Warning: Item {item} has data {data} but mismatch/missing in map.")
-            #     return None # Or return data anyway? Let's return data for now.
-             return data
+            # else: # Mismatch or item not directly managed by this controller via the map (e.g. temp items)
+            #     # For items managed by this controller, data(0) should be the key in the map.
+            #     # print(f"Warning: Item data found, but map consistency check failed or item not in map values for key {data}")
+            #     pass # Fall through to return data if it's a valid DataObject type
+            return data
         return None
+    # --- END ADDED LOOKUP METHODS ---
 
     def get_all_data_objects(self) -> List[DataObject]:
-        """Returns a list of all DataObjects currently managed."""
         return list(self._data_object_to_item_map.keys())
 
     def get_selected_data_objects(self) -> List[DataObject]:
-        """Returns a list of DataObjects corresponding to selected QGraphicsItems."""
         selected_objects = []
         for item in self._scene.selectedItems():
-            data_obj = self.get_object_for_item(item)
+            data_obj = self.get_object_for_item(item) # FIXED: Added get_object_for_item method
             if data_obj:
                 selected_objects.append(data_obj)
         return selected_objects

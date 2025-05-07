@@ -14,15 +14,6 @@ class BezierCurve:
     GRAPHICS_WIDTH = 2  # Espessura visual da curva
 
     def __init__(self, points: List[Point], color: Optional[QColor] = None):
-        """
-        Inicializa uma curva de Bézier cúbica composta.
-
-        Args:
-            points: Lista ordenada de pontos de controle. O número de pontos
-                    deve ser 4 para uma única curva, ou 3*N + 1 para N
-                    segmentos conectados (P0, P1, P2, P3, P4, P5, P6...).
-            color: Cor da curva.
-        """
         if not isinstance(points, list) or not all(
             isinstance(p, Point) for p in points
         ):
@@ -71,9 +62,9 @@ class BezierCurve:
 
         # Aparência
         pen = QPen(self.color, self.GRAPHICS_WIDTH)
+        pen.setJoinStyle(Qt.RoundJoin)
+        pen.setCapStyle(Qt.RoundCap)
         curve_item.setPen(pen)
-        # Curvas de Bézier geralmente não são preenchidas
-        curve_item.setBrush(Qt.NoBrush)
 
         # Flags
         curve_item.setFlag(QGraphicsItem.ItemIsSelectable)
@@ -100,15 +91,11 @@ class BezierCurve:
         """Retorna o número de segmentos cúbicos na curva composta."""
         return self._num_segments
 
-    # --- Métodos para cálculo/amostragem da curva ---
-    # Baseado na fórmula P(t) = (1-t)^3*P0 + 3*(1-t)^2*t*P1 + 3*(1-t)*t^2*P2 + t^3*P3
-
     @staticmethod
     def _cubic_bezier_point(
         t: float, p0: Point, p1: Point, p2: Point, p3: Point
     ) -> QPointF:
         """Calcula um ponto na curva de Bézier cúbica para um dado t (0 a 1)."""
-        # Clamp t to the valid range [0, 1]
         t = max(0.0, min(1.0, t))
 
         one_minus_t = 1.0 - t
@@ -137,12 +124,12 @@ class BezierCurve:
         """Amostra a curva completa, retornando uma lista de QPointF."""
         sampled_points = []
         if num_points_per_segment < 2:
-            num_points_per_segment = 2  # Minimum for a line segment
+            num_points_per_segment = 2
 
         if not self.points:
             return []
 
-        sampled_points.append(self.points[0].to_qpointf())  # Start point
+        sampled_points.append(self.points[0].to_qpointf())
 
         for i in range(self._num_segments):
             p0_idx = 3 * i
@@ -156,11 +143,9 @@ class BezierCurve:
                 p2 = self.points[p2_idx]
                 p3 = self.points[p3_idx]
 
-                # Sample segment from t > 0 up to t = 1
                 for j in range(1, num_points_per_segment + 1):
                     t = float(j) / float(num_points_per_segment)
                     point_on_curve = self._cubic_bezier_point(t, p0, p1, p2, p3)
-                    # Avoid duplicate if it's the start of the next segment and identical
                     if (
                         not sampled_points
                         or not math.isclose(point_on_curve.x(), sampled_points[-1].x())
