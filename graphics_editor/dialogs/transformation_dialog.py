@@ -55,10 +55,10 @@ class TransformationDialog(QDialog):
         self.translation_group = QGroupBox("Parâmetros de Translação")
         trans_layout = QVBoxLayout()
         self.dx_input = self._create_spinbox(
-            trans_layout, locale, "Deslocamento X (dx):", -9999, 9999, 0.0, 1.0
+            trans_layout, locale, "Deslocamento X (dx):", -99999, 99999, 0.0, 1.0
         )
         self.dy_input = self._create_spinbox(
-            trans_layout, locale, "Deslocamento Y (dy):", -9999, 9999, 0.0, 1.0
+            trans_layout, locale, "Deslocamento Y (dy):", -99999, 99999, 0.0, 1.0
         )
         self.translation_group.setLayout(trans_layout)
         main_layout.addWidget(self.translation_group)
@@ -66,15 +66,17 @@ class TransformationDialog(QDialog):
         # Escala (sx, sy)
         self.scaling_group = QGroupBox("Parâmetros de Escala")
         scale_layout = QVBoxLayout()
-        # Permite negativo para espelhamento, mas evita zero
+        # Allow negative for mirroring, but near-zero is handled by transformation matrix func
         self.sx_input = self._create_spinbox(
-            scale_layout, locale, "Fator X (sx):", -100, 100, 1.0, 0.1, 3
+            scale_layout, locale, "Fator X (sx):", -100.0, 100.0, 1.0, 0.1, 3
         )
         self.sy_input = self._create_spinbox(
-            scale_layout, locale, "Fator Y (sy):", -100, 100, 1.0, 0.1, 3
+            scale_layout, locale, "Fator Y (sy):", -100.0, 100.0, 1.0, 0.1, 3
         )
         scale_layout.addWidget(
-            QLabel("<small><i>Valores negativos espelham. Evite zero.</i></small>")
+            QLabel(
+                "<small><i>Valores negativos espelham. Próximo de zero pode colapsar o objeto.</i></small>"
+            )
         )
         self.scaling_group.setLayout(scale_layout)
         main_layout.addWidget(self.scaling_group)
@@ -83,7 +85,7 @@ class TransformationDialog(QDialog):
         self.rotation_group = QGroupBox("Parâmetros de Rotação")
         rot_layout = QVBoxLayout()
         self.angle_input = self._create_spinbox(
-            rot_layout, locale, "Ângulo (graus):", -3600, 3600, 0.0, 5.0, 2
+            rot_layout, locale, "Ângulo (graus):", -36000, 36000, 0.0, 5.0, 2
         )
         rot_layout.addWidget(QLabel("<small><i>Positivo: Anti-horário</i></small>"))
         self.rotation_group.setLayout(rot_layout)
@@ -93,10 +95,10 @@ class TransformationDialog(QDialog):
         self.arbitrary_point_group = QGroupBox("Ponto de Rotação")
         arb_layout = QVBoxLayout()
         self.px_input = self._create_spinbox(
-            arb_layout, locale, "Coord. X (px):", -9999, 9999
+            arb_layout, locale, "Coord. X (px):", -99999, 99999, 0.0, 1.0
         )
         self.py_input = self._create_spinbox(
-            arb_layout, locale, "Coord. Y (py):", -9999, 9999
+            arb_layout, locale, "Coord. Y (py):", -99999, 99999, 0.0, 1.0
         )
         self.arbitrary_point_group.setLayout(arb_layout)
         main_layout.addWidget(self.arbitrary_point_group)
@@ -134,8 +136,9 @@ class TransformationDialog(QDialog):
         spinbox.setDecimals(decimals)
         spinbox.setValue(default_val)
         spinbox.setMinimumWidth(100)
+        spinbox.setAlignment(Qt.AlignRight)  # Align input to the right
         spinbox.setFocusPolicy(Qt.StrongFocus)  # Melhora usabilidade
-        # spinbox.lineEdit().setSelection(0, 100) # Seleciona ao focar (opcional)
+        # spinbox.setGroupSeparatorShown(True) # Optional: show group separator
 
         h_layout.addWidget(label)
         h_layout.addStretch()
@@ -156,33 +159,40 @@ class TransformationDialog(QDialog):
         self.rotation_group.setVisible(is_rotation)
         self.arbitrary_point_group.setVisible(is_arbitrary_point)
 
-        self.adjustSize()  # Ajusta tamanho do diálogo
+        # Adjust dialog size to fit visible widgets
+        self.adjustSize()
 
     def _on_accept(self) -> None:
         """Valida e armazena os parâmetros ao clicar OK/Aplicar."""
         selected_type = self.type_combo.currentText()
         params: Dict[str, Any] = {}
-        epsilon = 1e-9  # Tolerância para evitar zero
+        epsilon = 1e-9  # Tolerance for near-zero checks (primarily for scale)
 
         try:
             if selected_type == "Translação":
                 params["type"] = "translate"
                 params["dx"] = self.dx_input.value()
                 params["dy"] = self.dy_input.value()
-                # if abs(params['dx']) < epsilon and abs(params['dy']) < epsilon:
-                #     raise ValueError("Translação nula (dx e dy são zero).")
+                # Allow zero translation, it might be intentional
             elif selected_type == "Escala (rel. ao Centro)":
                 params["type"] = "scale_center"
                 sx = self.sx_input.value()
                 sy = self.sy_input.value()
+                # Check for near-zero scale factors which cause collapse
                 if abs(sx) < epsilon or abs(sy) < epsilon:
-                    raise ValueError("Fatores de escala não podem ser zero.")
+                    # Let the transformation function handle this by returning identity, but warn user
+                    QMessageBox.warning(
+                        self,
+                        "Aviso de Escala",
+                        f"Fator de escala X ({sx:.3f}) ou Y ({sy:.3f}) está muito próximo de zero. "
+                        "A transformação de escala pode não ter efeito visual ou colapsar o objeto.",
+                    )
                 params["sx"] = sx
                 params["sy"] = sy
             elif selected_type == "Rotação (rel. à Origem)":
                 params["type"] = "rotate_origin"
                 params["angle"] = self.angle_input.value()
-                # if abs(params['angle']) < epsilon: raise ValueError("Ângulo de rotação é zero.")
+                # Allow zero rotation
             elif selected_type == "Rotação (rel. ao Centro)":
                 params["type"] = "rotate_center"
                 params["angle"] = self.angle_input.value()
@@ -192,6 +202,7 @@ class TransformationDialog(QDialog):
                 params["px"] = self.px_input.value()
                 params["py"] = self.py_input.value()
             else:
+                # Should not happen if combo box is correctly populated
                 raise ValueError(
                     f"Tipo de transformação desconhecido: '{selected_type}'"
                 )
@@ -199,10 +210,16 @@ class TransformationDialog(QDialog):
             self._parameters = params
             self.accept()  # Fecha com status OK
 
-        except ValueError as e:
-            QMessageBox.warning(self, "Entrada Inválida", str(e))
-            self._parameters = None  # Limpa em caso de erro
+        except (
+            ValueError
+        ) as e:  # Catch potential value errors during .value() although unlikely with QDoubleSpinBox
+            QMessageBox.warning(self, "Erro de Valor", str(e))
+            self._parameters = None
+        except Exception as e:  # Catch unexpected errors
+            QMessageBox.critical(self, "Erro Inesperado", f"Ocorreu um erro: {e}")
+            self._parameters = None
 
     def get_transformation_parameters(self) -> Optional[Dict[str, Any]]:
         """Retorna parâmetros validados se diálogo foi aceito, senão None."""
+        # Returns the parameters stored during _on_accept if dialog result is Accepted
         return self._parameters if self.result() == QDialog.Accepted else None

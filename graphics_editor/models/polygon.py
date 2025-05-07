@@ -1,33 +1,25 @@
 # graphics_editor/models/polygon.py
 from PyQt5.QtCore import Qt, QPointF
-from PyQt5.QtGui import QPen, QBrush, QPolygonF, QColor
-from PyQt5.QtWidgets import QGraphicsItem, QGraphicsPolygonItem
-from typing import List, Tuple, Optional
+from PyQt5.QtGui import QPen, QBrush, QPolygonF, QColor, QPainterPath
+from PyQt5.QtWidgets import QGraphicsItem, QGraphicsPolygonItem, QGraphicsPathItem
+from typing import List, Tuple, Optional, Union
 
-# Importa Point explicitamente
 from .point import Point
 
 
 class Polygon:
     """Representa um polígono 2D (fechado) ou polilinha (aberto)."""
 
-    GRAPHICS_BORDER_WIDTH = 2  # Espessura da borda
-    GRAPHICS_FILL_ALPHA = 0.35  # Opacidade do preenchimento (0.0 a 1.0)
+    GRAPHICS_BORDER_WIDTH = 2
+    GRAPHICS_FILL_ALPHA = 0.35
 
     def __init__(
         self,
         points: List[Point],
         is_open: bool = False,
         color: Optional[QColor] = None,
-        is_filled: bool = False,  # Added: Fill status
+        is_filled: bool = False,
     ):
-        """
-        Inicializa um polígono ou polilinha.
-        Args:
-            points: Lista ordenada de vértices (objetos Point).
-            is_open: True para polilinha, False para polígono fechado.
-            color: Cor da borda/linha.
-        """
         if not isinstance(points, list) or not all(
             isinstance(p, Point) for p in points
         ):
@@ -49,41 +41,35 @@ class Polygon:
             color if isinstance(color, QColor) and color.isValid() else QColor(Qt.black)
         )
 
-    def create_graphics_item(self) -> QGraphicsPolygonItem:
-        """Cria a representação gráfica QGraphicsPolygonItem."""
-        # Cria QPolygonF a partir dos pontos
-        polygon_qf = QPolygonF([p.to_qpointf() for p in self.points])
-        polygon_item = QGraphicsPolygonItem(polygon_qf)
-
-        # Aparência (Caneta e Pincel)
+    def create_graphics_item(self) -> Union[QGraphicsPolygonItem, QGraphicsPathItem]:
+        """Cria a representação gráfica."""
         pen = QPen(self.color, self.GRAPHICS_BORDER_WIDTH)
-        brush = QBrush()
+        brush = QBrush(Qt.NoBrush)
+        item: Union[QGraphicsPolygonItem, QGraphicsPathItem]
 
-        if self.is_open:  # Polilinha
-            pen.setStyle(Qt.DashLine)
-            brush.setStyle(Qt.NoBrush)
-        else:  # Polígono Fechado
+        if self.is_open:
+            path = QPainterPath()
+            if self.points:
+                path.moveTo(self.points[0].to_qpointf())
+                for point_model in self.points[1:]:
+                    path.lineTo(point_model.to_qpointf())
+            item = QGraphicsPathItem(path)
+            pen.setStyle(Qt.SolidLine)
+        else:
+            polygon_qf = QPolygonF([p.to_qpointf() for p in self.points])
+            item = QGraphicsPolygonItem(polygon_qf)
             pen.setStyle(Qt.SolidLine)
             if self.is_filled:
                 brush.setStyle(Qt.SolidPattern)
                 fill_color = QColor(self.color)
-                fill_color.setAlphaF(self.GRAPHICS_FILL_ALPHA)  # Aplica transparência
+                fill_color.setAlphaF(self.GRAPHICS_FILL_ALPHA)
                 brush.setColor(fill_color)
-            else:
-                brush.setStyle(
-                    Qt.NoBrush
-                )  # Explicitly NoBrush if closed but not filled
 
-        polygon_item.setPen(pen)
-        polygon_item.setBrush(brush)
+        item.setPen(pen)
+        item.setBrush(brush)
+        item.setFlag(QGraphicsItem.ItemIsSelectable)
 
-        # Flags
-        polygon_item.setFlag(QGraphicsItem.ItemIsSelectable)
-        # polygon_item.setFlag(QGraphicsItem.ItemIsMovable)
-
-        # Associa dados
-        polygon_item.setData(0, self)
-        return polygon_item
+        return item
 
     def get_coords(self) -> List[Tuple[float, float]]:
         """Retorna lista de coordenadas (x, y) dos vértices."""
@@ -92,10 +78,12 @@ class Polygon:
     def get_center(self) -> Tuple[float, float]:
         """Retorna o centroide (média aritmética dos vértices)."""
         if not self.points:
-            return (0.0, 0.0)  # Caso impossível devido ao __init__
+            return (0.0, 0.0)
         sum_x = sum(p.x for p in self.points)
         sum_y = sum(p.y for p in self.points)
         count = len(self.points)
+        if count == 0:
+            return (0.0, 0.0)
         return (sum_x / count, sum_y / count)
 
     def __repr__(self) -> str:

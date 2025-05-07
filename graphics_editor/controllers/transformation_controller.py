@@ -3,16 +3,17 @@ import numpy as np
 from PyQt5.QtCore import QObject, pyqtSignal
 from PyQt5.QtWidgets import QMessageBox, QDialog, QWidget
 
-from typing import Union, Optional, Dict, Any
+from typing import Union, Optional, Dict, Any, List, Tuple
 
 # Importações relativas
-from ..models.point import Point
-from ..models.line import Line
-from ..models.polygon import Polygon
+from ..models import Point, Line, Polygon, BezierCurve  # Use __init__
 from ..dialogs.transformation_dialog import TransformationDialog
-from ..utils import transformations as tf  # Módulo com funções de matriz
-# Alias para tipos de dados transformáveis
-TransformableObject = Union[Point, Line, Polygon]
+from ..utils import transformations as tf
+
+# Alias for types that can be transformed
+TransformableObject = Union[Point, Line, Polygon, BezierCurve]
+# Tuple of actual types for isinstance checks
+TRANSFORMABLE_TYPES = (Point, Line, Polygon, BezierCurve)
 
 
 class TransformationController(QObject):
@@ -20,26 +21,20 @@ class TransformationController(QObject):
     Controlador para aplicar transformações 2D aos objetos de dados.
     """
 
-    # Sinal emitido com o objeto de dados *modificado* após a transformação
-    # Usa 'object' genérico devido a limitações do pyqtSignal com Union complexos
-    # O slot receptor deve verificar o tipo real.
-    object_transformed = pyqtSignal(object)
+    object_transformed = pyqtSignal(object)  # Emits the modified DataObject
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self._parent_widget = parent  # Para diálogos modais
+        self._parent_widget = parent
 
     def request_transformation(self, data_object: TransformableObject) -> None:
-        """
-        Inicia o processo de transformação para um objeto.
-        Abre o diálogo e, se confirmado, chama _perform_transformation.
-        """
-        # Validação inicial do tipo de objeto
-        if not isinstance(data_object, (Point, Line, Polygon)):
+        """Initiates the transformation process for a single DataObject."""
+        # Validate object type using the tuple for cleaner check
+        if not isinstance(data_object, TRANSFORMABLE_TYPES):
             QMessageBox.warning(
                 self._parent_widget,
                 "Tipo Inválido",
-                f"Objeto '{type(data_object).__name__}' não suportado.",
+                f"Objeto '{type(data_object).__name__}' não suportado para transformação.",
             )
             return
 
@@ -47,53 +42,53 @@ class TransformationController(QObject):
         if dialog.exec_() == QDialog.Accepted:
             params = dialog.get_transformation_parameters()
             if params:
-                # Passa o objeto original para ser modificado
                 self._perform_transformation(data_object, params)
 
     def _perform_transformation(
         self, data_object: TransformableObject, params: Dict[str, Any]
     ) -> None:
-        """Aplica a transformação geométrica ao objeto de dados."""
+        """Applies the geometric transformation to the DataObject's coordinates."""
         transform_type = params.get("type", "desconhecido")
 
         try:
-            # 1. Extrai vértices
+            # 1. Extract vertices/control points
             try:
-                # Point.get_coords retorna Tuple, Line/Polygon retorna List[Tuple]
                 vertices_data = data_object.get_coords()
                 vertices: List[Tuple[float, float]] = []
-                if isinstance(vertices_data, tuple):  # É um Point
-                    vertices = [vertices_data]
-                elif isinstance(vertices_data, list):  # É Line ou Polygon
-                    vertices = vertices_data
+                if isinstance(vertices_data, tuple):
+                    vertices = [vertices_data]  # Point
+                elif isinstance(vertices_data, list):
+                    vertices = vertices_data  # Line/Polygon/Bezier
                 else:
-                    raise TypeError("Método get_coords() retornou tipo inesperado.")
-
+                    raise TypeError("get_coords() returned unexpected type.")
                 if not vertices:
-                    raise ValueError("Objeto sem vértices válidos.")
-
+                    raise ValueError("Object has no vertices/control points.")
             except AttributeError:
                 raise ValueError(
-                    f"Objeto '{type(data_object).__name__}' não tem 'get_coords'."
+                    f"Object '{type(data_object).__name__}' missing 'get_coords'."
                 )
 
-            # 2. Calcula centro (se necessário)
+            # 2. Calculate center (if needed)
             center_x, center_y = 0.0, 0.0
             if transform_type in ["scale_center", "rotate_center"]:
                 try:
-                    center = data_object.get_center()  # Usa método do modelo
-                    if not isinstance(center, tuple) or len(center) != 2:
-                        raise ValueError("Método get_center() retornou valor inválido.")
-                    center_x, center_y = center
-                except AttributeError:
-                    raise ValueError(
-                        f"Objeto '{type(data_object).__name__}' não tem 'get_center'."
-                    )
+                    center = data_object.get_center()
+                except AttributeError:  # Fallback if get_center is missing
+                    if vertices:
+                        center = (
+                            sum(v[0] for v in vertices) / len(vertices),
+                            sum(v[1] for v in vertices) / len(vertices),
+                        )
+                    else:
+                        raise ValueError(
+                            f"Cannot get center for object {type(data_object).__name__}."
+                        )
+                if not isinstance(center, tuple) or len(center) != 2:
+                    raise ValueError("get_center() returned invalid value.")
+                center_x, center_y = center
 
-            # 3. Constrói matriz de transformação
-            matrix = np.identity(3, dtype=float)  # Começa com identidade
-            T_to_origin = T_back = R = S = None  # Inicializa matrizes parciais
-
+            # 3. Build transformation matrix
+            matrix = np.identity(3, dtype=float)
             if transform_type == "translate":
                 matrix = tf.create_translation_matrix(
                     params.get("dx", 0.0), params.get("dy", 0.0)
@@ -104,7 +99,7 @@ class TransformationController(QObject):
                     params.get("sx", 1.0), params.get("sy", 1.0)
                 )
                 T_back = tf.create_translation_matrix(center_x, center_y)
-                matrix = T_back @ S @ T_to_origin  # Aplica da direita para esquerda
+                matrix = T_back @ S @ T_to_origin
             elif transform_type == "rotate_origin":
                 matrix = tf.create_rotation_matrix(params.get("angle", 0.0))
             elif transform_type == "rotate_center":
@@ -120,37 +115,34 @@ class TransformationController(QObject):
                 matrix = T_back_from_point @ R @ T_to_point
             else:
                 raise ValueError(
-                    f"Tipo de transformação não implementado: '{transform_type}'"
+                    f"Transformation type '{transform_type}' not implemented."
                 )
 
-            # 4. Aplica transformação aos vértices
+            # 4. Apply transformation
             new_vertices = tf.apply_transformation(vertices, matrix)
-
             if len(new_vertices) != len(vertices):
-                raise ValueError(
-                    "Transformação resultou em número diferente de vértices."
-                )
+                raise ValueError("Vertex count mismatch after transformation.")
 
-            # 5. Atualiza o objeto de dados original (modificação in-place)
+            # 5. Update DataObject in-place
             if isinstance(data_object, Point):
                 if new_vertices:
                     data_object.x, data_object.y = new_vertices[0]
-                else:
-                    raise ValueError("Transformação de Ponto falhou.")
             elif isinstance(data_object, Line):
                 if len(new_vertices) == 2:
                     data_object.start.x, data_object.start.y = new_vertices[0]
                     data_object.end.x, data_object.end.y = new_vertices[1]
-                else:
-                    raise ValueError("Transformação de Linha falhou.")
-            elif isinstance(data_object, Polygon):
+            elif isinstance(
+                data_object, (Polygon, BezierCurve)
+            ):  # Both store points in .points list
                 if len(new_vertices) == len(data_object.points):
                     for i, p_obj in enumerate(data_object.points):
                         p_obj.x, p_obj.y = new_vertices[i]
                 else:
-                    raise ValueError("Transformação de Polígono falhou.")
+                    raise ValueError(
+                        f"Vertex count mismatch for {type(data_object).__name__}."
+                    )
 
-            # 6. Emite sinal com o objeto modificado
+            # 6. Emit signal with the modified object
             self.object_transformed.emit(data_object)
 
         except (
@@ -163,11 +155,11 @@ class TransformationController(QObject):
             QMessageBox.critical(
                 self._parent_widget,
                 "Erro na Transformação",
-                f"Falha ao aplicar '{transform_type}':\n{e}",
+                f"Falha ao aplicar '{transform_type}' em {type(data_object).__name__}:\n{e}",
             )
-        except Exception as e:  # Erro inesperado
+        except Exception as e:
             QMessageBox.critical(
                 self._parent_widget,
                 "Erro Inesperado",
-                f"Erro durante a transformação:\n{e}",
+                f"Erro durante a transformação de {type(data_object).__name__}:\n{e}",
             )

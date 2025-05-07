@@ -22,8 +22,9 @@ def create_scaling_matrix(sx: float, sy: float) -> np.ndarray:
     Cria matriz de escala 3x3 (relativa à origem).
     Retorna identidade se sx ou sy forem muito próximos de zero para evitar colapso.
     """
-    # Valores pequenos (incluindo negativos para espelhamento) são permitidos
+    # Check if scale factors are practically zero
     if abs(sx) < EPSILON or abs(sy) < EPSILON:
+        # Return identity matrix to avoid scaling issues
         print(
             f"Aviso: Fator de escala próximo de zero ({sx=}, {sy=}). Usando identidade."
         )
@@ -69,22 +70,27 @@ def apply_transformation(vertices: VertexList, matrix: np.ndarray) -> VertexList
     )
 
     # Aplica a transformação: matrix (3x3) @ coords.T (3xN) -> resultado (3xN)
-    # Garante que a matriz também seja float
+    # Ensure matrix is also float type
     transformed_homogeneous = matrix.astype(float) @ homogeneous_coords.T
 
     # Transpõe de volta para (N, 3)
     transformed_homogeneous = transformed_homogeneous.T
 
     # Normaliza dividindo por w (terceira coordenada)
-    # Pega a coluna w (índice 2) e evita divisão por zero
+    # Pega a coluna w (índice 2) e evita divisão por zero ou near-zero
     w_coords = transformed_homogeneous[:, 2]
-    w_coords[np.abs(w_coords) < EPSILON] = (
-        1.0  # Se w for ~0, trata como 1 (evita NaN/Inf)
-    )
+    # Create a mask for near-zero values
+    near_zero_mask = np.abs(w_coords) < EPSILON
+    # Avoid division by zero: replace near-zero w with 1.0 for division purposes
+    # This effectively treats points at infinity as having w=1, preventing NaN/Inf.
+    w_divisor = np.where(near_zero_mask, 1.0, w_coords)
 
-    # Divide x e y (colunas 0 e 1) por w
-    # np.newaxis transforma w_coords (N,) em (N, 1) para broadcasting
-    transformed_coords = transformed_homogeneous[:, :2] / w_coords[:, np.newaxis]
+    # Divide x e y (colunas 0 e 1) por w_divisor
+    # np.newaxis transforma w_divisor (N,) em (N, 1) para broadcasting
+    transformed_coords = transformed_homogeneous[:, :2] / w_divisor[:, np.newaxis]
+
+    # Handle original near-zero w values if needed (e.g., for perspective, though not used here)
+    # Currently, points that would have w~0 are projected as if w=1.
 
     # Converte de volta para lista de tuplas
     return [tuple(coord) for coord in transformed_coords]

@@ -37,10 +37,10 @@ class Line:
 
         # Flags
         line_item.setFlag(QGraphicsItem.ItemIsSelectable)
-        line_item.setFlag(QGraphicsItem.ItemIsMovable)
+        # line_item.setFlag(QGraphicsItem.ItemIsMovable)
 
-        # Associa dados
-        line_item.setData(0, self)
+        # SceneController will handle setting SC_ORIGINAL_OBJECT_KEY and SC_CURRENT_REPRESENTATION_KEY
+        # line_item.setData(0, self) # Removed as per issue #6
         return line_item
 
     def get_coords(self) -> List[Tuple[float, float]]:
