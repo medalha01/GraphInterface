@@ -36,9 +36,7 @@ class Polygon:
 
         self.points: List[Point] = points
         self.is_open: bool = is_open
-        self.is_filled: bool = (
-            is_filled if not is_open else False
-        )  # Open polygons cannot be filled
+        self.is_filled: bool = is_filled if not is_open else False
         self.color: QColor = (
             color if isinstance(color, QColor) and color.isValid() else QColor(Qt.black)
         )
@@ -49,15 +47,15 @@ class Polygon:
         brush = QBrush(Qt.NoBrush)
         item: Union[QGraphicsPolygonItem, QGraphicsPathItem]
 
-        if self.is_open:  # Polylines are QGraphicsPathItem
+        if self.is_open:
             path = QPainterPath()
-            if self.points:  # Ensure there are points
+            if self.points:
                 path.moveTo(self.points[0].to_qpointf())
                 for point_model in self.points[1:]:
                     path.lineTo(point_model.to_qpointf())
             item = QGraphicsPathItem(path)
-            pen.setStyle(Qt.DashLine)  # Open polygons (polylines) are dashed
-        else:  # Closed polygons are QGraphicsPolygonItem
+            pen.setStyle(Qt.SolidLine)
+        else:
             polygon_qf = QPolygonF([p.to_qpointf() for p in self.points])
             item = QGraphicsPolygonItem(polygon_qf)
             pen.setStyle(Qt.SolidLine)
@@ -70,8 +68,7 @@ class Polygon:
         item.setPen(pen)
         item.setBrush(brush)
         item.setFlag(QGraphicsItem.ItemIsSelectable)
-        # SceneController will handle setting SC_ORIGINAL_OBJECT_KEY and SC_CURRENT_REPRESENTATION_KEY
-        # item.setData(0, self) # Removed as per issue #6
+
         return item
 
     def get_coords(self) -> List[Tuple[float, float]]:
