@@ -1,6 +1,7 @@
 # graphics_editor/controllers/scene_controller.py
 import math
 from typing import List, Tuple, Dict, Union, Optional
+from enum import Enum  # Adicionado para BezierClipStatus
 from PyQt5.QtWidgets import (
     QGraphicsScene,
     QGraphicsItem,
@@ -24,18 +25,19 @@ from ..utils import clipping as clp
 
 DataObject = Union[Point, Line, Polygon, BezierCurve]
 
-# Keys for QGraphicsItem data
-SC_ORIGINAL_OBJECT_KEY = Qt.UserRole + 1  # Stores the original DataObject instance
-SC_CURRENT_REPRESENTATION_KEY = (
-    Qt.UserRole + 3
-)  # Stores the current visual DataObject (e.g., a clipped version or Polygon for Bezier)
-SC_IS_CLIPPED_BEZIER_AS_POLYGON_KEY = (
-    Qt.UserRole + 2
-)  # Flag: True if item is a Polygon representing a clipped Bezier
+SC_ORIGINAL_OBJECT_KEY = Qt.UserRole + 1
+SC_CURRENT_REPRESENTATION_KEY = Qt.UserRole + 3
+SC_IS_CLIPPED_BEZIER_AS_POLYGON_KEY = Qt.UserRole + 2
+
+
+class BezierClipStatus(Enum):
+    FULLY_INSIDE = 1
+    FULLY_OUTSIDE = 2
+    PARTIALLY_INSIDE = 3
 
 
 class SceneController(QObject):
-    scene_modified = pyqtSignal(bool)  # True if requires saving
+    scene_modified = pyqtSignal(bool)
 
     def __init__(
         self,
@@ -46,12 +48,12 @@ class SceneController(QObject):
         super().__init__(parent)
         self._scene = scene
         self._state_manager = state_manager
-        # Map: id(original_DataObject) -> QGraphicsItem
         self._id_to_item_map: Dict[int, QGraphicsItem] = {}
 
         self._clip_rect_tuple: clp.ClipRect = self._get_clip_rect_tuple()
         self._clipper_func = self._get_clipper_function()
-        self.bezier_clipping_samples_per_segment = 20  # Default, can be overridden
+
+        self.bezier_sampling_points_per_segment = 20
 
         self._state_manager.clip_rect_changed.connect(
             self._on_clipping_parameters_changed
@@ -60,19 +62,13 @@ class SceneController(QObject):
             self._on_clipping_parameters_changed
         )
 
-    def _on_clipping_parameters_changed(
-        self, *args
-    ):  # Accept potential QRectF or Algorithm from signal
-        """Updates internal clipping state and refreshes all objects."""
+    def _on_clipping_parameters_changed(self, *args):
         self._clip_rect_tuple = self._get_clip_rect_tuple()
         self._clipper_func = self._get_clipper_function()
         self.refresh_all_object_clipping()
 
     def refresh_all_object_clipping(self):
-        """Re-clips and updates all managed QGraphicsItems in the scene."""
         original_objects_to_refresh = []
-        # Iterate over a copy of keys, as _id_to_item_map might change
-        # if items are removed/replaced during update_object_item.
         for item_id in list(self._id_to_item_map.keys()):
             item = self._id_to_item_map.get(item_id)
             if item:
@@ -81,12 +77,7 @@ class SceneController(QObject):
                     original_objects_to_refresh.append(original_obj)
 
         for original_data_object in original_objects_to_refresh:
-            # mark_modified=False: Re-clipping due to viewport/clipper change
-            # should not inherently mark the document as having unsaved changes.
-            # However, if an object is now fully clipped (removed) or becomes visible (added),
-            # update_object_item will emit scene_modified internally if appropriate.
             self.update_object_item(original_data_object, mark_modified=False)
-
         self._scene.update()
 
     def _get_clip_rect_tuple(self) -> clp.ClipRect:
@@ -101,30 +92,99 @@ class SceneController(QObject):
             else clp.liang_barsky
         )
 
-    def _is_bezier_fully_inside(
-        self, bezier: BezierCurve, clip_rect_tuple: clp.ClipRect
-    ) -> bool:
-        if not bezier.points:
-            return False
-        for cp_model in bezier.points:
-            if clp.clip_point(cp_model.get_coords(), clip_rect_tuple) is None:
-                return False
-        # A more robust check would sample the curve, but control points give a good heuristic.
-        # For perfect check, one might need to verify bounding box of curve segments.
-        return True
+    def _get_bezier_segment_clip_status(
+        self, segment_cps: List[Point], clip_rect_tuple: clp.ClipRect
+    ) -> BezierClipStatus:
+        """Determina se um único segmento de Bézier está totalmente dentro, totalmente fora ou parcialmente dentro."""
+        xmin, ymin, xmax, ymax = clip_rect_tuple
+
+        all_inside = True
+
+        codes = [
+            _compute_cohen_sutherland_code_tuple(p.get_coords(), clip_rect_tuple)
+            for p in segment_cps
+        ]
+
+        for code in codes:
+            if code != clp.INSIDE:
+                all_inside = False
+                break
+        if all_inside:
+            return BezierClipStatus.FULLY_INSIDE
+
+        combined_code_for_all_outside_check = codes[0]
+        all_cps_definitively_outside_one_boundary = True
+        for i in range(1, len(codes)):
+            if codes[i] == clp.INSIDE:
+                all_cps_definitively_outside_one_boundary = False
+                break
+            combined_code_for_all_outside_check &= codes[i]
+
+        if (
+            all_cps_definitively_outside_one_boundary
+            and combined_code_for_all_outside_check != 0
+        ):
+
+            bbox = BezierCurve.segment_bounding_box(segment_cps)
+            if bbox:
+                bb_xmin, bb_ymin, bb_xmax, bb_ymax = bbox
+                if bb_xmax < xmin or bb_xmin > xmax or bb_ymax < ymin or bb_ymin > ymax:
+                    return BezierClipStatus.FULLY_OUTSIDE
+
+        return BezierClipStatus.PARTIALLY_INSIDE
+
+    def _clip_bezier_segment_recursive(
+        self, segment_cps: List[Point], clip_rect_tuple: clp.ClipRect, depth: int
+    ) -> List[List[Point]]:
+        """
+        Recorta recursivamente um único segmento de Bézier.
+        Retorna uma lista de listas de pontos de controle (cada lista é um sub-segmento de Bézier visível).
+        """
+        visible_segments_cps: List[List[Point]] = []
+
+        if depth > BezierCurve.MAX_SUBDIVISION_DEPTH:
+
+            if (
+                BezierCurve.segment_control_polygon_length(segment_cps)
+                < BezierCurve.SUBDIVISION_THRESHOLD * 5
+            ):
+                visible_segments_cps.append(segment_cps)
+            return visible_segments_cps
+
+        status = self._get_bezier_segment_clip_status(segment_cps, clip_rect_tuple)
+
+        if status == BezierClipStatus.FULLY_INSIDE:
+            visible_segments_cps.append(segment_cps)
+        elif status == BezierClipStatus.FULLY_OUTSIDE:
+            pass
+        elif status == BezierClipStatus.PARTIALLY_INSIDE:
+
+            if (
+                BezierCurve.segment_control_polygon_length(segment_cps)
+                < BezierCurve.SUBDIVISION_THRESHOLD
+            ):
+                visible_segments_cps.append(segment_cps)
+            else:
+
+                cps1, cps2 = BezierCurve.subdivide_segment(segment_cps)
+                visible_segments_cps.extend(
+                    self._clip_bezier_segment_recursive(
+                        cps1, clip_rect_tuple, depth + 1
+                    )
+                )
+                visible_segments_cps.extend(
+                    self._clip_bezier_segment_recursive(
+                        cps2, clip_rect_tuple, depth + 1
+                    )
+                )
+
+        return visible_segments_cps
 
     def _clip_data_object(
         self, original_data_object: DataObject
     ) -> Tuple[Optional[DataObject], bool]:
-        """
-        Clips the DataObject.
-        Returns: (clipped_display_object_or_None, bezier_type_changed_on_clip)
-        'bezier_type_changed_on_clip' is True if a Bezier's visual representation type changes (e.g., Bezier -> Polygon or vice-versa).
-        """
         clipped_display_object: Optional[DataObject] = None
-        bezier_type_changed_on_clip = (
-            False  # Specifically for Bezier <-> Polygon display type changes
-        )
+        display_type_changed = False
         clip_rect_tuple = self._clip_rect_tuple
         line_clipper = self._clipper_func
 
@@ -137,6 +197,7 @@ class SceneController(QObject):
                     clipped_display_object = Point(
                         clipped_coords[0], clipped_coords[1], original_data_object.color
                     )
+
             elif isinstance(original_data_object, Line):
                 clipped_segment_coords = line_clipper(
                     original_data_object.start.get_coords(),
@@ -145,120 +206,99 @@ class SceneController(QObject):
                 )
                 if clipped_segment_coords:
                     p1_coords, p2_coords = clipped_segment_coords
-                    start_pt = Point(
-                        p1_coords[0], p1_coords[1], original_data_object.color
-                    )
-                    end_pt = Point(
-                        p2_coords[0], p2_coords[1], original_data_object.color
-                    )
                     clipped_display_object = Line(
-                        start_pt, end_pt, original_data_object.color
+                        Point(p1_coords[0], p1_coords[1]),
+                        Point(p2_coords[0], p2_coords[1]),
+                        original_data_object.color,
                     )
+
             elif isinstance(original_data_object, Polygon):
-                # Check if all original vertices are inside (quick accept for non-open polygons)
-                is_fully_inside = True
-                if not original_data_object.is_open:  # Only for closed polygons
-                    for p_coord in original_data_object.get_coords():
-                        if clp.clip_point(p_coord, clip_rect_tuple) is None:
-                            is_fully_inside = False
-                            break
-                else:  # Open polygons (polylines) always go through SH
-                    is_fully_inside = False
-
-                if (
-                    is_fully_inside and not original_data_object.is_open
-                ):  # Quick accept for closed, fully inside
-                    clipped_display_object = original_data_object
-                else:
-                    clipped_vertices_coords = clp.sutherland_hodgman(
-                        original_data_object.get_coords(), clip_rect_tuple
+                clipped_vertices_coords = clp.sutherland_hodgman(
+                    original_data_object.get_coords(), clip_rect_tuple
+                )
+                min_points = 2 if original_data_object.is_open else 3
+                if len(clipped_vertices_coords) >= min_points:
+                    clipped_points_models = [
+                        Point(x, y, original_data_object.color)
+                        for x, y in clipped_vertices_coords
+                    ]
+                    clipped_display_object = Polygon(
+                        clipped_points_models,
+                        is_open=original_data_object.is_open,
+                        color=original_data_object.color,
+                        is_filled=original_data_object.is_filled,
                     )
-                    # For open polygons (polylines), min 2 points. For closed, min 3.
-                    min_points = 2 if original_data_object.is_open else 3
-                    if len(clipped_vertices_coords) >= min_points:
-                        clipped_points_models = [
-                            Point(x, y, original_data_object.color)
-                            for x, y in clipped_vertices_coords
-                        ]
-                        clipped_display_object = Polygon(
-                            clipped_points_models,
-                            is_open=original_data_object.is_open,
-                            color=original_data_object.color,
-                            is_filled=original_data_object.is_filled,
-                        )
+
             elif isinstance(original_data_object, BezierCurve):
-                # Heuristic: if all control points are inside, assume Bezier is fully inside.
-                # For more accuracy, one could check the convex hull of the Bezier or sample it.
-                if self._is_bezier_fully_inside(original_data_object, clip_rect_tuple):
-                    clipped_display_object = original_data_object  # No change
-                    # Check if the *previous* display object was a Polygon (clipped Bezier)
-                    # This logic is tricky here, better handled in update_object_item
-                else:  # Bezier needs clipping, represent as polyline (open Polygon)
-                    sampled_qpoints = original_data_object.sample_curve(
-                        self.bezier_clipping_samples_per_segment
-                    )
-                    if len(sampled_qpoints) < 2:
-                        clipped_display_object = None
-                    else:
-                        raw_polyline_coords: List[Tuple[float, float]] = [
-                            (qp.x(), qp.y()) for qp in sampled_qpoints
-                        ]
-                        # Sutherland-Hodgman for the polyline approximation
-                        clipped_sh_coords = clp.sutherland_hodgman(
-                            raw_polyline_coords, clip_rect_tuple
+                all_visible_segment_cps_lists: List[List[Point]] = []
+                for i in range(original_data_object.get_num_segments()):
+                    segment_cps = original_data_object.get_segment_control_points(i)
+                    if segment_cps:
+                        visible_sub_cps = self._clip_bezier_segment_recursive(
+                            segment_cps, clip_rect_tuple, 0
                         )
+                        all_visible_segment_cps_lists.extend(visible_sub_cps)
 
-                        if len(clipped_sh_coords) >= 2:
-                            clipped_points_models = [
-                                Point(x, y, original_data_object.color)
-                                for x, y in clipped_sh_coords
-                            ]
-                            clipped_display_object = (
-                                Polygon(  # Displayed as an open polygon
-                                    clipped_points_models,
-                                    is_open=True,
-                                    color=original_data_object.color,
-                                    is_filled=False,
-                                )
-                            )
-                            bezier_type_changed_on_clip = True
+                if all_visible_segment_cps_lists:
+                    combined_cps: List[Point] = []
+                    for seg_idx, seg_cps_list in enumerate(
+                        all_visible_segment_cps_lists
+                    ):
+                        if seg_idx == 0:
+                            combined_cps.extend(seg_cps_list)
+                        else:
+                            # Evita duplicar o ponto de conexão se os segmentos devem ser encadeados
+                            if (
+                                combined_cps
+                                and seg_cps_list
+                                and seg_cps_list[0].get_coords()
+                                == combined_cps[-1].get_coords()
+                            ):
+                                combined_cps.extend(seg_cps_list[1:])
+                            elif seg_cps_list:
+                                combined_cps.extend(seg_cps_list)
 
-            # If original was Bezier and now it's displayed as Bezier again (was previously Polygon)
-            if isinstance(original_data_object, BezierCurve) and isinstance(
-                clipped_display_object, BezierCurve
-            ):
-                # This implies it might have been a Polygon before, now it's Bezier again.
-                # This situation also implies a type change for display.
-                # We need to know the *previous* display type. This is hard here.
-                # Let update_object_item handle this determination.
-                # For now, bezier_type_changed_on_clip is true if it *became* a Polygon.
-                pass
+                    if len(combined_cps) >= 4 and (len(combined_cps) - 1) % 3 == 0:
+                        clipped_display_object = BezierCurve(
+                            combined_cps, original_data_object.color
+                        )
+                        display_type_changed = False
+                    else:
+                        # Fallback: se os CPs resultantes não formam uma Bézier encadeada válida
+                        # Isso pode acontecer se o recorte resultar em CPs insuficientes ou
+                        # uma estrutura que não pode ser uma única BezierCurve.
+                        # Neste caso, o objeto não pode ser exibido como Bezier.
+                        clipped_display_object = None
+                        display_type_changed = True  # Era Bézier, agora não pode ser representada como uma.
+                else:
+                    clipped_display_object = None
+                    if original_data_object.points:
+                        display_type_changed = True
 
-            return clipped_display_object, bezier_type_changed_on_clip
+            return clipped_display_object, display_type_changed
 
         except Exception as e:
+            import traceback
+
             print(
-                f"Error during clipping of {type(original_data_object).__name__}: {e}"
+                f"Error during clipping of {type(original_data_object).__name__}: {e}\n{traceback.format_exc()}"
             )
             return None, False
 
     def _get_required_qgraphicsitem_type(
         self, display_data_object: DataObject
     ) -> Optional[type]:
-        """Determines the QGraphicsItem class needed to represent the display_data_object."""
         if isinstance(display_data_object, Point):
             return QGraphicsEllipseItem
-        elif isinstance(display_data_object, Line):
+        if isinstance(display_data_object, Line):
             return QGraphicsLineItem
-        elif isinstance(display_data_object, Polygon):
-            # Open Polygons (polylines) and Polygons that represent clipped Beziers
-            # are typically drawn as QGraphicsPathItem for dashed lines or complex paths.
-            # Closed, filled/unfilled polygons can be QGraphicsPolygonItem.
-            if display_data_object.is_open:
-                return QGraphicsPathItem
-            else:  # Closed polygon
-                return QGraphicsPolygonItem
-        elif isinstance(display_data_object, BezierCurve):
+        if isinstance(display_data_object, Polygon):
+            return (
+                QGraphicsPathItem
+                if display_data_object.is_open
+                else QGraphicsPolygonItem
+            )
+        if isinstance(display_data_object, BezierCurve):
             return QGraphicsPathItem
         return None
 
@@ -266,22 +306,14 @@ class SceneController(QObject):
         self, original_data_object: DataObject, mark_modified: bool = True
     ) -> Optional[QGraphicsItem]:
         if not isinstance(original_data_object, DATA_OBJECT_TYPES):
-            print(
-                f"Warning: Attempted to add unsupported object type {type(original_data_object)}"
-            )
             return None
 
         item_id = id(original_data_object)
         if item_id in self._id_to_item_map:
-            print(
-                f"Warning: Object with id {item_id} already in scene. Re-adding not supported this way."
-            )
             return self._id_to_item_map[item_id]
 
-        display_data_object, _ = (
-            self._clip_data_object(  # bezier_type_changed flag not critical for new add
-                original_data_object
-            )
+        display_data_object, display_type_changed = self._clip_data_object(
+            original_data_object
         )
 
         if display_data_object:
@@ -291,12 +323,13 @@ class SceneController(QObject):
                 graphics_item.setData(
                     SC_CURRENT_REPRESENTATION_KEY, display_data_object
                 )
-                if isinstance(original_data_object, BezierCurve) and isinstance(
-                    display_data_object, Polygon  # i.e. it's a clipped Bezier
-                ):
-                    graphics_item.setData(SC_IS_CLIPPED_BEZIER_AS_POLYGON_KEY, True)
-                else:
-                    graphics_item.setData(SC_IS_CLIPPED_BEZIER_AS_POLYGON_KEY, False)
+
+                is_poly_from_bezier = isinstance(
+                    original_data_object, BezierCurve
+                ) and isinstance(display_data_object, Polygon)
+                graphics_item.setData(
+                    SC_IS_CLIPPED_BEZIER_AS_POLYGON_KEY, is_poly_from_bezier
+                )
 
                 self._scene.addItem(graphics_item)
                 self._id_to_item_map[item_id] = graphics_item
@@ -305,12 +338,9 @@ class SceneController(QObject):
                 return graphics_item
             except Exception as e:
                 QMessageBox.critical(
-                    None,
-                    "Erro ao Adicionar Item",
-                    f"Não foi possível criar item gráfico para {type(display_data_object).__name__}: {e}",
+                    None, "Erro ao Adicionar Item", f"Falha ao criar item gráfico: {e}"
                 )
 
-        # If object was fully clipped out or failed to create graphic
         if mark_modified and display_data_object is None:
             self.scene_modified.emit(True)
         return None
@@ -325,7 +355,6 @@ class SceneController(QObject):
             if graphics_item and graphics_item.scene():
                 self._scene.removeItem(graphics_item)
                 removed_count += 1
-
         if removed_count > 0 and mark_modified:
             self.scene_modified.emit(True)
         return removed_count
@@ -335,49 +364,34 @@ class SceneController(QObject):
         for item in items_to_remove:
             if item and item.scene():
                 self._scene.removeItem(item)
-
         cleared_count = len(self._id_to_item_map)
         self._id_to_item_map.clear()
-
-        if (
-            cleared_count > 0 and mark_modified
-        ):  # Only emit if something was actually cleared
-            self.scene_modified.emit(True)
-        elif mark_modified and cleared_count == 0:  # Explicitly clearing an empty scene
-            self.scene_modified.emit(False)  # No effective change that requires saving
+        if mark_modified:
+            self.scene_modified.emit(cleared_count > 0)
 
     def update_object_item(
         self, original_modified_data_object: DataObject, mark_modified: bool = True
     ):
         if not isinstance(original_modified_data_object, DATA_OBJECT_TYPES):
-            print(
-                f"Warning: update_object_item called with invalid type {type(original_modified_data_object)}"
-            )
             return
 
         item_id = id(original_modified_data_object)
         current_graphics_item = self._id_to_item_map.get(item_id)
 
-        new_display_data_object, bezier_type_changed_on_clip = self._clip_data_object(
+        new_display_data_object, display_type_changed = self._clip_data_object(
             original_modified_data_object
         )
 
         if not current_graphics_item or not current_graphics_item.scene():
-            # Object might have been fully clipped out previously and removed, or never added.
-            # Try to re-add if it's now visible.
-            if new_display_data_object:  # Only add if it's visible now
-                new_item = self.add_object(original_modified_data_object, mark_modified)
-                # add_object handles scene_modified signal
-            elif (
-                mark_modified
-            ):  # Was not in scene, and still not visible (fully clipped)
-                # If an object was modified but remains fully clipped, it's still a modification to data
+            if new_display_data_object:
+                self.add_object(original_modified_data_object, mark_modified)
+            elif mark_modified:
                 self.scene_modified.emit(True)
             return
 
         try:
-            if new_display_data_object is None:  # Fully clipped out now
-                if current_graphics_item and current_graphics_item.scene():
+            if new_display_data_object is None:
+                if current_graphics_item.scene():
                     self._scene.removeItem(current_graphics_item)
                 if item_id in self._id_to_item_map:
                     del self._id_to_item_map[item_id]
@@ -387,41 +401,22 @@ class SceneController(QObject):
                 required_new_item_type = self._get_required_qgraphicsitem_type(
                     new_display_data_object
                 )
+                needs_replacement = not isinstance(
+                    current_graphics_item, required_new_item_type
+                )
 
-                needs_replacement = False
-                if not isinstance(current_graphics_item, required_new_item_type):
-                    needs_replacement = True
-
-                # If the original was Bezier and its display form changed (to Polygon or back to Bezier from Polygon)
-                # This check is subtle: bezier_type_changed_on_clip is true if IT BECAME a Polygon.
-                # If it was a Polygon (representing Bezier) and now it's Bezier again, that's also a type change.
-                # The isinstance check above should largely cover this if _get_required_qgraphicsitem_type is correct.
-                # Let's consider if the *previous display type* differs from *new display type*
-                previous_display_object = current_graphics_item.data(
+                previous_display_obj = current_graphics_item.data(
                     SC_CURRENT_REPRESENTATION_KEY
                 )
-                if type(previous_display_object) != type(new_display_data_object):
+                if type(previous_display_obj) != type(new_display_data_object):
                     needs_replacement = True
-                if (
-                    isinstance(original_modified_data_object, BezierCurve)
-                    and bezier_type_changed_on_clip
-                ):
-                    needs_replacement = True  # Bezier became Polygon
-                if (
-                    isinstance(previous_display_object, Polygon)
-                    and previous_display_object.data(
-                        SC_IS_CLIPPED_BEZIER_AS_POLYGON_KEY
-                    )
-                    and isinstance(new_display_data_object, BezierCurve)
-                ):
-                    needs_replacement = (
-                        True  # Was Polygon (from Bezier), now Bezier again
-                    )
+
+                if display_type_changed:
+                    needs_replacement = True
 
                 if needs_replacement:
                     if current_graphics_item.scene():
                         self._scene.removeItem(current_graphics_item)
-
                     new_graphics_item = new_display_data_object.create_graphics_item()
                     new_graphics_item.setData(
                         SC_ORIGINAL_OBJECT_KEY, original_modified_data_object
@@ -429,36 +424,26 @@ class SceneController(QObject):
                     new_graphics_item.setData(
                         SC_CURRENT_REPRESENTATION_KEY, new_display_data_object
                     )
-                    if isinstance(
+                    is_poly_from_bezier = isinstance(
                         original_modified_data_object, BezierCurve
-                    ) and isinstance(new_display_data_object, Polygon):
-                        new_graphics_item.setData(
-                            SC_IS_CLIPPED_BEZIER_AS_POLYGON_KEY, True
-                        )
-                    else:
-                        new_graphics_item.setData(
-                            SC_IS_CLIPPED_BEZIER_AS_POLYGON_KEY, False
-                        )
+                    ) and isinstance(new_display_data_object, Polygon)
+                    new_graphics_item.setData(
+                        SC_IS_CLIPPED_BEZIER_AS_POLYGON_KEY, is_poly_from_bezier
+                    )
 
                     self._scene.addItem(new_graphics_item)
                     self._id_to_item_map[item_id] = new_graphics_item
-                    if mark_modified:
-                        self.scene_modified.emit(True)
-                else:  # Update existing item in-place
+                else:
                     current_graphics_item.prepareGeometryChange()
                     current_graphics_item.setData(
                         SC_CURRENT_REPRESENTATION_KEY, new_display_data_object
                     )
-                    if isinstance(
+                    is_poly_from_bezier = isinstance(
                         original_modified_data_object, BezierCurve
-                    ) and isinstance(new_display_data_object, Polygon):
-                        current_graphics_item.setData(
-                            SC_IS_CLIPPED_BEZIER_AS_POLYGON_KEY, True
-                        )
-                    else:
-                        current_graphics_item.setData(
-                            SC_IS_CLIPPED_BEZIER_AS_POLYGON_KEY, False
-                        )
+                    ) and isinstance(new_display_data_object, Polygon)
+                    current_graphics_item.setData(
+                        SC_IS_CLIPPED_BEZIER_AS_POLYGON_KEY, is_poly_from_bezier
+                    )
 
                     self._update_graphics_item_geometry(
                         current_graphics_item, new_display_data_object
@@ -467,13 +452,12 @@ class SceneController(QObject):
                         current_graphics_item, new_display_data_object
                     )
                     current_graphics_item.update()
-                    if mark_modified:
-                        self.scene_modified.emit(True)
+
+                if mark_modified:
+                    self.scene_modified.emit(True)
         except Exception as e:
             QMessageBox.critical(
-                None,
-                "Erro ao Atualizar Item",
-                f"Falha ao atualizar item {type(current_graphics_item).__name__} pós-modificação: {e}",
+                None, "Erro ao Atualizar Item", f"Falha ao atualizar item: {e}"
             )
 
     def _update_graphics_item_geometry(
@@ -487,75 +471,52 @@ class SceneController(QObject):
                     display_data.GRAPHICS_SIZE,
                     display_data.GRAPHICS_SIZE / 2.0,
                 )
-                new_rect = QRectF(
-                    display_data.x - offset, display_data.y - offset, size, size
+                item.setRect(
+                    QRectF(display_data.x - offset, display_data.y - offset, size, size)
                 )
-                if item.rect() != new_rect:
-                    item.setRect(new_rect)
             elif isinstance(display_data, Line) and isinstance(item, QGraphicsLineItem):
-                new_line = QLineF(
-                    display_data.start.to_qpointf(), display_data.end.to_qpointf()
+                item.setLine(
+                    QLineF(
+                        display_data.start.to_qpointf(), display_data.end.to_qpointf()
+                    )
                 )
-                if item.line() != new_line:
-                    item.setLine(new_line)
             elif isinstance(display_data, Polygon):
-                # If it's an open polygon (polyline) or a polygon representing a clipped Bezier,
-                # it should be a QGraphicsPathItem.
-                if display_data.is_open or item.data(
-                    SC_IS_CLIPPED_BEZIER_AS_POLYGON_KEY
-                ):
+                is_poly_from_bezier = (
+                    item.data(SC_IS_CLIPPED_BEZIER_AS_POLYGON_KEY) is True
+                )
+                if display_data.is_open or is_poly_from_bezier:
                     if isinstance(item, QGraphicsPathItem):
                         new_path = QPainterPath()
-                        if display_data.points and len(display_data.points) > 0:
+                        if display_data.points:
                             new_path.moveTo(display_data.points[0].to_qpointf())
                             for p_model in display_data.points[1:]:
                                 new_path.lineTo(p_model.to_qpointf())
-                        if item.path() != new_path:
-                            item.setPath(new_path)
-                    # else: type mismatch, should have been replaced by update_object_item
-                else:  # Closed, non-Bezier-derived Polygon -> QGraphicsPolygonItem
+                        item.setPath(new_path)
+                else:
                     if isinstance(item, QGraphicsPolygonItem):
-                        new_polygon_qf = QPolygonF(
-                            [p.to_qpointf() for p in display_data.points]
+                        item.setPolygon(
+                            QPolygonF([p.to_qpointf() for p in display_data.points])
                         )
-                        if item.polygon() != new_polygon_qf:
-                            item.setPolygon(new_polygon_qf)
-                    # else: type mismatch
             elif isinstance(display_data, BezierCurve) and isinstance(
                 item, QGraphicsPathItem
-            ):  # This is a true Bezier display, not a clipped one as Polygon
-                new_path = QPainterPath()
-                if display_data.points:
-                    new_path.moveTo(display_data.points[0].to_qpointf())
-                    num_segments = display_data.get_num_segments()
-                    for i in range(num_segments):
-                        p1_idx, p2_idx, p3_idx = 3 * i + 1, 3 * i + 2, 3 * i + 3
-                        if p3_idx < len(display_data.points):
-                            ctrl1 = display_data.points[p1_idx].to_qpointf()
-                            ctrl2 = display_data.points[p2_idx].to_qpointf()
-                            endpt = display_data.points[p3_idx].to_qpointf()
-                            new_path.cubicTo(ctrl1, ctrl2, endpt)
-                if item.path() != new_path:
-                    item.setPath(new_path)
+            ):
+
+                temp_item_for_path = display_data.create_graphics_item()
+                if isinstance(temp_item_for_path, QGraphicsPathItem):
+                    item.setPath(temp_item_for_path.path())
+
         except Exception as e:
             print(
                 f"ERROR in _update_graphics_item_geometry for {type(display_data)}/{type(item)}: {e}"
             )
 
     def _apply_style_to_item(self, item: QGraphicsItem, display_data: DataObject):
-        if not hasattr(display_data, "color"):  # Should not happen for our DataObjects
+        if not hasattr(display_data, "color"):
             return
-        color = (
-            display_data.color
-            if isinstance(display_data.color, QColor) and display_data.color.isValid()
-            else QColor(Qt.black)
-        )
+        color = display_data.color if display_data.color.isValid() else QColor(Qt.black)
         pen = QPen(Qt.NoPen)
         brush = QBrush(Qt.NoBrush)
-
-        is_polygon_from_clipped_bezier = (
-            item.data(SC_IS_CLIPPED_BEZIER_AS_POLYGON_KEY) is True
-        )
+        is_poly_from_bezier = item.data(SC_IS_CLIPPED_BEZIER_AS_POLYGON_KEY) is True
 
         if isinstance(display_data, Point):
             pen = QPen(color, 1)
@@ -564,23 +525,28 @@ class SceneController(QObject):
             pen = QPen(color, display_data.GRAPHICS_WIDTH, Qt.SolidLine)
         elif isinstance(display_data, Polygon):
             pen = QPen(color, Polygon.GRAPHICS_BORDER_WIDTH)
-            if display_data.is_open or is_polygon_from_clipped_bezier:
-                pen.setStyle(Qt.DashLine)
-            else:  # Closed, non-Bezier-derived polygon
-                pen.setStyle(Qt.SolidLine)
-                if display_data.is_filled:
-                    brush.setStyle(Qt.SolidPattern)
-                    fill_color = QColor(color)
-                    fill_color.setAlphaF(Polygon.GRAPHICS_FILL_ALPHA)
-                    brush.setColor(fill_color)
+            pen.setStyle(
+                Qt.DashLine
+                if display_data.is_open or is_poly_from_bezier
+                else Qt.SolidLine
+            )
+            if (
+                not display_data.is_open
+                and not is_poly_from_bezier
+                and display_data.is_filled
+            ):
+                brush.setStyle(Qt.SolidPattern)
+                fill_color = QColor(color)
+                fill_color.setAlphaF(Polygon.GRAPHICS_FILL_ALPHA)
+                brush.setColor(fill_color)
         elif isinstance(display_data, BezierCurve):
             pen = QPen(color, BezierCurve.GRAPHICS_WIDTH, Qt.SolidLine)
             pen.setJoinStyle(Qt.RoundJoin)
             pen.setCapStyle(Qt.RoundCap)
 
-        if hasattr(item, "setPen") and item.pen() != pen:
+        if hasattr(item, "setPen"):
             item.setPen(pen)
-        if hasattr(item, "setBrush") and item.brush() != brush:
+        if hasattr(item, "setBrush"):
             item.setBrush(brush)
 
     def get_item_for_original_object_id(
@@ -589,34 +555,47 @@ class SceneController(QObject):
         return self._id_to_item_map.get(original_object_id)
 
     def get_original_object_for_item(self, item: QGraphicsItem) -> Optional[DataObject]:
-        # Ensure it's not a special item like viewport_rect by checking for SC_ORIGINAL_OBJECT_KEY
         data = item.data(SC_ORIGINAL_OBJECT_KEY)
-        if isinstance(data, DATA_OBJECT_TYPES):
-            return data
-        return None
+        return data if isinstance(data, DATA_OBJECT_TYPES) else None
 
     def get_current_representation_for_item(
         self, item: QGraphicsItem
     ) -> Optional[DataObject]:
         data = item.data(SC_CURRENT_REPRESENTATION_KEY)
-        if isinstance(data, DATA_OBJECT_TYPES):
-            return data
-        return None
+        return data if isinstance(data, DATA_OBJECT_TYPES) else None
 
     def get_all_original_data_objects(self) -> List[DataObject]:
-        objects = []
-        for item in self._id_to_item_map.values():
-            original_obj = item.data(SC_ORIGINAL_OBJECT_KEY)
-            if original_obj and isinstance(
-                original_obj, DATA_OBJECT_TYPES
-            ):  # Ensure it's a valid data object
-                objects.append(original_obj)
-        return objects
+        return [
+            item.data(SC_ORIGINAL_OBJECT_KEY)
+            for item in self._id_to_item_map.values()
+            if item.data(SC_ORIGINAL_OBJECT_KEY)
+            and isinstance(item.data(SC_ORIGINAL_OBJECT_KEY), DATA_OBJECT_TYPES)
+        ]
 
     def get_selected_data_objects(self) -> List[DataObject]:
-        selected_original_objects = []
-        for item in self._scene.selectedItems():
-            original_obj = item.data(SC_ORIGINAL_OBJECT_KEY)
-            if isinstance(original_obj, DATA_OBJECT_TYPES):
-                selected_original_objects.append(original_obj)
-        return selected_original_objects
+        return [
+            item.data(SC_ORIGINAL_OBJECT_KEY)
+            for item in self._scene.selectedItems()
+            if item.data(SC_ORIGINAL_OBJECT_KEY)
+            and isinstance(item.data(SC_ORIGINAL_OBJECT_KEY), DATA_OBJECT_TYPES)
+        ]
+
+
+def _compute_cohen_sutherland_code_tuple(
+    point: Tuple[float, float], clip_rect: clp.ClipRect
+) -> int:
+    """Computa o outcode Cohen-Sutherland para uma tupla de ponto."""
+    x, y = point
+    xmin, ymin, xmax, ymax = clip_rect
+    actual_xmin, actual_xmax = min(xmin, xmax), max(xmin, xmax)
+    actual_ymin, actual_ymax = min(ymin, ymax), max(ymin, ymax)
+    code = clp.INSIDE
+    if x < actual_xmin:
+        code |= clp.LEFT
+    elif x > actual_xmax:
+        code |= clp.RIGHT
+    if y < actual_ymin:
+        code |= clp.BOTTOM
+    elif y > actual_ymax:
+        code |= clp.TOP
+    return code
