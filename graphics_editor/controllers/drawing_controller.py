@@ -65,19 +65,17 @@ class DrawingController(QObject):
         """Called by GraphicsEditor after user provides polygon type/fill info."""
         if cancelled or self._pending_first_polygon_point is None:
             self.status_message_requested.emit("Desenho de polígono cancelado.", 2000)
-            self._finish_current_drawing(
-                commit=False
-            )  # Resets pending point and other states
+            # Use _finish_current_drawing to reset pending point and other states
+            self._finish_current_drawing(commit=False)
             return
 
         self._current_polygon_is_open = is_open
         self._current_polygon_is_filled = is_filled
 
         first_point_data = self._pending_first_polygon_point
-        self._pending_first_polygon_point = None
+        self._pending_first_polygon_point = None  # Clear after use
 
         self._current_polygon_points.append(first_point_data)
-        # Use the point's own position for the initial preview update before mouse moves
         self._update_polygon_preview(first_point_data.to_qpointf())
 
         pt_type = (
@@ -120,14 +118,19 @@ class DrawingController(QObject):
 
         elif mode == DrawingMode.POLYGON:
             if (
-                not self._current_polygon_points
-                and self._pending_first_polygon_point is None
+                not self._current_polygon_points  # No points *in current drawing* yet
+                and self._pending_first_polygon_point
+                is None  # And no point is pending properties
             ):
                 self._pending_first_polygon_point = current_point_data
                 self.polygon_properties_query_requested.emit()
-                return  # Wait for properties from editor
+                # Do not proceed; wait for properties from editor
+                return
 
-            if (
+            # If properties were just set, _pending_first_polygon_point is now None,
+            # and _current_polygon_points contains the first point. This click is for the second point.
+
+            if (  # Avoid duplicate consecutive points
                 self._current_polygon_points
                 and current_point_data.get_coords()
                 == self._current_polygon_points[-1].get_coords()
@@ -136,7 +139,8 @@ class DrawingController(QObject):
                 return
 
             if self._pending_first_polygon_point is not None:
-                # This case should ideally not be hit if logic flow is correct (properties set before more clicks)
+                # This case implies user clicked again before properties dialog finished.
+                # It's unlikely if UI is modal, but good to have a guard.
                 self.status_message_requested.emit(
                     "Aguardando definição de tipo de polígono.", 2000
                 )
@@ -182,14 +186,12 @@ class DrawingController(QObject):
                 current_segment_index = (num_pts - 1) // 3 + 1
                 status += f" Adicione mais {pts_needed_current} ponto(s) para completar o segmento {current_segment_index}."
 
-        if not can_finish and num_pts >= 1:  # Clarify if cannot finish yet
+        if not can_finish and num_pts >= 1:
             current_segment_group = (num_pts - 1) // 3
             next_finish_count = 4 + 3 * current_segment_group
             if num_pts < next_finish_count:
                 pts_to_next_finish = next_finish_count - num_pts
-                if (
-                    pts_to_next_finish > 0 and (num_pts - min_finish_pts) % 3 != 0
-                ):  # Only show if not already at a finish point
+                if pts_to_next_finish > 0 and (num_pts - min_finish_pts) % 3 != 0:
                     status += (
                         f" (Precisa de mais {pts_to_next_finish} para poder finalizar)."
                     )
@@ -205,9 +207,7 @@ class DrawingController(QObject):
         mode = self._state_manager.drawing_mode()
         if mode == DrawingMode.LINE and self._current_line_start:
             self._update_line_preview(scene_pos)
-        elif (
-            mode == DrawingMode.POLYGON and self._current_polygon_points
-        ):  # Check points, not pending_first_point
+        elif mode == DrawingMode.POLYGON and self._current_polygon_points:
             self._update_polygon_preview(scene_pos)
         elif mode == DrawingMode.BEZIER and self._current_bezier_points:
             self._update_bezier_preview(scene_pos)
@@ -261,72 +261,115 @@ class DrawingController(QObject):
             self._temp_bezier_path.setPath(path)
 
     def _finish_current_drawing(self, commit: bool = True) -> None:
-        drawing_finished_or_cancelled = False
+        drawing_finished_or_cancelled = False  # Will be set true if state is reset
         mode = self._state_manager.drawing_mode()
         color = self._state_manager.draw_color()
 
-        self._pending_first_polygon_point = (
-            None  # Always clear pending point on finish/cancel
-        )
+        # Always clear pending point on finish/cancel, regardless of mode
+        self._pending_first_polygon_point = None
 
-        if mode == DrawingMode.LINE and self._current_line_start:
-            self._current_line_start = None
-            drawing_finished_or_cancelled = True
-
-        elif mode == DrawingMode.POLYGON and self._current_polygon_points:
-            min_points_needed = 2 if self._current_polygon_is_open else 3
-            can_commit = len(self._current_polygon_points) >= min_points_needed
-            if commit and can_commit:
-                polygon_data = Polygon(
-                    self._current_polygon_points.copy(),
-                    is_open=self._current_polygon_is_open,
-                    color=color,
-                    is_filled=self._current_polygon_is_filled,
-                )
-                self.object_ready_to_add.emit(polygon_data)
-            elif commit and not can_commit:
-                QMessageBox.warning(
-                    None,
-                    "Pontos Insuficientes",
-                    f"Polígono {'aberto' if self._current_polygon_is_open else 'fechado'} "
-                    f"requer {min_points_needed} pontos (você tem {len(self._current_polygon_points)}).",
-                )
-                return
-            if (commit and can_commit) or not commit:
-                self._current_polygon_points = []
-                self._current_polygon_is_open = False
-                self._current_polygon_is_filled = False
+        if mode == DrawingMode.LINE:
+            if self._current_line_start:  # If a line drawing was in progress
+                # If commit is false (cancel), or if commit is true (already handled by left click)
+                # just reset state.
+                self._current_line_start = None
                 drawing_finished_or_cancelled = True
 
-        elif mode == DrawingMode.BEZIER and self._current_bezier_points:
-            num_pts = len(self._current_bezier_points)
-            is_valid_count = num_pts >= 4 and (num_pts - 4) % 3 == 0
-            can_commit = is_valid_count
-            if commit and can_commit:
-                bezier_data = BezierCurve(
-                    self._current_bezier_points.copy(), color=color
+        elif mode == DrawingMode.POLYGON:
+            if self._current_polygon_points:  # If a polygon drawing was in progress
+                min_points_needed = 2 if self._current_polygon_is_open else 3
+                can_commit_polygon = (
+                    len(self._current_polygon_points) >= min_points_needed
                 )
-                self.object_ready_to_add.emit(bezier_data)
-            elif commit and not can_commit:
-                pts_needed = -1
-                if num_pts < 4:
-                    pts_needed = 4 - num_pts
-                else:
-                    pts_needed = 3 - ((num_pts - 1) % 3)
-                msg = f"Não é possível finalizar a curva de Bézier. "
-                if pts_needed > 0 and pts_needed != 3:
-                    msg += f"Precisa de mais {pts_needed} ponto(s)."
-                else:
-                    msg += f"Número inválido de pontos ({num_pts}). Use 4, 7, 10, ..."
-                QMessageBox.warning(None, "Pontos Inválidos", msg)
-                return
-            if (commit and can_commit) or not commit:
-                self._current_bezier_points = []
+
+                if commit and can_commit_polygon:
+                    polygon_data = Polygon(
+                        self._current_polygon_points.copy(),
+                        is_open=self._current_polygon_is_open,
+                        color=color,
+                        is_filled=self._current_polygon_is_filled,
+                    )
+                    self.object_ready_to_add.emit(polygon_data)
+                elif commit and not can_commit_polygon:
+                    QMessageBox.warning(
+                        None,
+                        "Pontos Insuficientes",
+                        f"Polígono {'aberto' if self._current_polygon_is_open else 'fechado'} "
+                        f"requer {min_points_needed} pontos (você tem {len(self._current_polygon_points)}). "
+                        "Desenho não finalizado.",
+                    )
+                    # Do not reset state yet, let user add more points or cancel explicitly
+                    # The temp items will remain for them to see.
+                    # However, if the intention is to cancel on invalid commit, then set drawing_finished_or_cancelled = True
+                    # For now, let's treat invalid commit as "still drawing"
+                    return  # Early exit, do not clear state below
+
+                # Reset state if committed successfully OR if explicitly cancelled (commit=False)
+                if (commit and can_commit_polygon) or not commit:
+                    self._current_polygon_points = []
+                    self._current_polygon_is_open = False
+                    self._current_polygon_is_filled = False
+                    drawing_finished_or_cancelled = True
+            elif (
+                not commit and self._pending_first_polygon_point is None
+            ):  # Cancelled before even 1st point after properties
+                drawing_finished_or_cancelled = True
+
+        elif mode == DrawingMode.BEZIER:
+            if self._current_bezier_points:  # If a Bezier drawing was in progress
+                num_pts = len(self._current_bezier_points)
+                is_valid_count = num_pts >= 4 and (num_pts - 4) % 3 == 0
+                can_commit_bezier = is_valid_count
+
+                if commit and can_commit_bezier:
+                    bezier_data = BezierCurve(
+                        self._current_bezier_points.copy(), color=color
+                    )
+                    self.object_ready_to_add.emit(bezier_data)
+                elif commit and not can_commit_bezier:
+                    pts_needed = -1
+                    if num_pts < 4:
+                        pts_needed = 4 - num_pts
+                    else:  # num_pts > 4 but not a multiple of 3 + 1
+                        pts_needed = 3 - ((num_pts - 1) % 3)
+                        if (
+                            pts_needed == 3
+                        ):  # This means it's one short of a full segment
+                            pts_needed = 3 - ((num_pts - 4) % 3)
+
+                    msg = f"Não é possível finalizar a curva de Bézier. "
+                    if (
+                        pts_needed > 0 and pts_needed < 3
+                    ):  # Only show if 1 or 2 points are needed for next segment
+                        msg += f"Precisa de mais {pts_needed} ponto(s)."
+                    else:  # Generic message for other invalid counts
+                        msg += (
+                            f"Número inválido de pontos ({num_pts}). Use 4, 7, 10, ... "
+                        )
+                        msg += "Desenho não finalizado."
+                    QMessageBox.warning(None, "Pontos Inválidos", msg)
+                    # Similar to polygon, treat invalid commit as "still drawing"
+                    return  # Early exit
+
+                # Reset state if committed successfully OR if explicitly cancelled
+                if (commit and can_commit_bezier) or not commit:
+                    self._current_bezier_points = []
+                    drawing_finished_or_cancelled = True
+            elif (
+                not commit
+            ):  # Cancelled (e.g. mode change) when no points were even there
                 drawing_finished_or_cancelled = True
 
         if drawing_finished_or_cancelled:
             self._remove_temp_items()
             self.status_message_requested.emit("Pronto.", 1000)
+            # Ensure all drawing state variables are reset
+            self._current_line_start = None
+            self._current_polygon_points = []
+            self._current_polygon_is_open = False
+            self._current_polygon_is_filled = False
+            self._current_bezier_points = []
+            self._pending_first_polygon_point = None
 
     def _remove_temp_items(self) -> None:
         items_to_remove = [

@@ -42,8 +42,8 @@ class Point:
         point_item.setFlag(QGraphicsItem.ItemIsSelectable)
         # point_item.setFlag(QGraphicsItem.ItemIsMovable) # Allow move
 
-        # Associa este objeto de dados ao item gráfico (chave 0)
-        point_item.setData(0, self)
+        # SceneController will handle setting SC_ORIGINAL_OBJECT_KEY and SC_CURRENT_REPRESENTATION_KEY
+        # point_item.setData(0, self) # Removed as per issue #6
         return point_item
 
     def get_coords(self) -> Tuple[float, float]:

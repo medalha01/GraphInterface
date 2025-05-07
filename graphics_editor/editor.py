@@ -106,7 +106,7 @@ class GraphicsEditor(QMainWindow):
         )
 
         self._scene_controller = SceneController(self._scene, self._state_manager, self)
-        self._scene_controller.bezier_clipping_samples = (
+        self._scene_controller.bezier_clipping_samples_per_segment = (  # Ensure consistent naming
             self.BEZIER_CLIPPING_SAMPLES_PER_SEGMENT
         )
 
@@ -128,7 +128,8 @@ class GraphicsEditor(QMainWindow):
         self._clip_rect_item.setPen(pen)
         self._clip_rect_item.setBrush(QBrush(Qt.NoBrush))
         self._clip_rect_item.setZValue(-1)
-        self._clip_rect_item.setData(0, "viewport_rect")  # Keep 0 for non-data objects
+        # Using a specific key for non-data objects to avoid confusion with SC_ORIGINAL_OBJECT_KEY
+        self._clip_rect_item.setData(Qt.UserRole + 100, "viewport_rect")
         self._scene.addItem(self._clip_rect_item)
 
     def _setup_ui_elements(self) -> None:
@@ -183,10 +184,12 @@ class GraphicsEditor(QMainWindow):
         self._state_manager.line_clipper_changed.connect(
             self._ui_manager.update_clipper_selection
         )
+        # SceneController connects to these for re-clipping. Editor updates the visual rect.
         self._state_manager.clip_rect_changed.connect(self._update_clip_rect_item)
+
         self._state_manager.drawing_mode_changed.connect(self._update_view_interaction)
         self._state_manager.drawing_mode_changed.connect(
-            self._drawing_controller.cancel_current_drawing  # This will call _on_mode_changed
+            self._drawing_controller.cancel_current_drawing
         )
 
         self._drawing_controller.object_ready_to_add.connect(
@@ -246,6 +249,7 @@ class GraphicsEditor(QMainWindow):
             self._view.set_drag_mode(QGraphicsView.NoDrag)
 
     def _set_line_clipper(self, algorithm: LineClippingAlgorithm):
+        # This will trigger SceneController to re-clip via StateManager signal
         self._state_manager.set_selected_line_clipper(algorithm)
         algo_name = (
             "Cohen-Sutherland"
@@ -301,7 +305,6 @@ class GraphicsEditor(QMainWindow):
         self._view.centerOn(self._state_manager.clip_rect().center())
 
     def _delete_selected_items(self):
-        # Fetch original data objects for removal
         selected_data_objects = self._scene_controller.get_selected_data_objects()
         if not selected_data_objects:
             self._set_status_message("Nenhum item selecionado para excluir.", 2000)
@@ -311,7 +314,7 @@ class GraphicsEditor(QMainWindow):
             selected_data_objects
         )
         if removed_count > 0:
-            self._view.viewport().update()  # Ensure view updates
+            self._view.viewport().update()
             self._set_status_message(f"{removed_count} item(ns) excluído(s).", 2000)
 
     def _clear_scene_confirmed(self):
@@ -442,7 +445,7 @@ class GraphicsEditor(QMainWindow):
                 "Selecione exatamente UM objeto para transformar.",
             )
             return
-        data_object = selected_objects[0]  # This should be the original DataObject
+        data_object = selected_objects[0]
         self._drawing_controller.cancel_current_drawing()
         self._transformation_controller.request_transformation(data_object)
 
@@ -544,11 +547,17 @@ class GraphicsEditor(QMainWindow):
     def _toggle_viewport_visibility(self, checked: bool):
         self._clip_rect_item.setVisible(checked)
         self._ui_manager.update_viewport_action_state(checked)
+        # Changing viewport visibility might affect how users perceive clipping,
+        # but doesn't change the actual clipping logic. Re-clipping not strictly needed here.
+        # If appearance of _clip_rect_item itself affects objects, then scene->update()
+        self._scene.update()
 
     def _update_clip_rect_item(self, rect: QRectF):
         normalized_rect = rect.normalized()
         if self._clip_rect_item.rect() != normalized_rect:
             self._clip_rect_item.setRect(normalized_rect)
+        # The actual re-clipping of objects is handled by SceneController
+        # in response to state_manager.clip_rect_changed.
 
     def _prompt_polygon_properties(self):
         type_reply = QMessageBox.question(
