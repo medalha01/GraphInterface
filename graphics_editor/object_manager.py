@@ -1,3 +1,8 @@
+"""
+Módulo que gerencia a conversão entre dados de arquivo e objetos internos.
+Este módulo contém a classe ObjectManager que gerencia a conversão entre formatos OBJ/MTL e objetos internos.
+"""
+
 # graphics_editor/object_manager.py
 from typing import List, Tuple, Dict, Union, Optional
 from PyQt5.QtGui import QColor, QPolygonF
@@ -17,19 +22,26 @@ DATA_OBJECT_TYPES = (Point, Line, Polygon, BezierCurve)
 
 class ObjectManager:
     """
-    Gerencia a conversão entre dados de arquivo OBJ/MTL e os objetos de dados
-    internos (Point, Line, Polygon, BezierCurve), seguindo o padrão Wavefront OBJ.
-    NOTA: Bézier curves são APROXIMADAS como polilinhas (sequência de 'l') ao salvar,
-          e não são reconstruídas ao carregar.
+    Gerencia a conversão entre dados de arquivo OBJ/MTL e os objetos de dados internos.
+    
+    Esta classe é responsável por:
+    - Converter dados OBJ/MTL em objetos internos (Point, Line, Polygon, BezierCurve)
+    - Gerar dados OBJ/MTL a partir de objetos internos
+    - Gerenciar a aproximação de curvas de Bézier como polilinhas
+    - Tratar erros e gerar avisos durante a conversão
+    
+    Nota: Curvas de Bézier são aproximadas como polilinhas ao salvar e não são
+          reconstruídas ao carregar.
     """
 
     DEFAULT_BEZIER_SAVE_SAMPLES = 20
 
     def __init__(self, bezier_samples: Optional[int] = None):
         """
-        Initializes the ObjectManager.
+        Inicializa o gerenciador de objetos.
+        
         Args:
-            bezier_samples: Number of samples per segment for Bezier approximation on save.
+            bezier_samples: Número de amostras por segmento para aproximação de Bézier ao salvar
         """
         self.bezier_save_samples = (
             bezier_samples
@@ -45,17 +57,16 @@ class ObjectManager:
     ) -> Tuple[List[DataObject], List[str]]:
         """
         Analisa linhas de um arquivo OBJ e converte em objetos de dados.
-        Bézier curves are not directly supported in standard OBJ format.
-        This parser reads standard 'v', 'p', 'l', 'f' commands.
-        Any curve information (e.g., 'curv', 'curv2') is ignored.
-
+        
         Args:
-            obj_lines: Linhas relevantes do OBJ (sem comentários/vazias).
-            material_colors: Dicionário {nome_material: QColor} do MTL.
-            default_color: Cor padrão se material não for encontrado.
-
+            obj_lines: Linhas relevantes do OBJ (sem comentários/vazias)
+            material_colors: Dicionário {nome_material: QColor} do MTL
+            default_color: Cor padrão se material não for encontrado
+            
         Returns:
-            Tupla: (Lista de DataObject criados, Lista de avisos).
+            Tuple[List[DataObject], List[str]]: Tupla contendo:
+                - Lista de objetos de dados criados
+                - Lista de avisos gerados durante a análise
         """
         parsed_objects: List[DataObject] = []
         warnings: List[str] = []
@@ -181,7 +192,18 @@ class ObjectManager:
         line_num: int,
         warnings_list: List[str],
     ) -> List[int]:
-        """Helper para analisar índices de vértices (p, l, f). Retorna base 0."""
+        """
+        Analisa índices de vértices de comandos OBJ (p, l, f).
+        
+        Args:
+            index_parts: Lista de strings contendo os índices
+            num_vertices: Número total de vértices disponíveis
+            line_num: Número da linha sendo processada
+            warnings_list: Lista para acumular avisos
+            
+        Returns:
+            List[int]: Lista de índices convertidos para base 0
+        """
         indices: List[int] = []
         if num_vertices == 0 and index_parts:
             warnings_list.append(
@@ -231,16 +253,17 @@ class ObjectManager:
         self, data_objects: List[DataObject], mtl_filename: str
     ) -> Tuple[Optional[List[str]], Optional[List[str]], List[str]]:
         """
-        Gera conteúdo dos arquivos OBJ e MTL. Bezier curves são aproximadas como polilinhas ('l').
-        Original Bezier control point information is lost in the saved OBJ file.
-
+        Gera conteúdo dos arquivos OBJ e MTL a partir dos objetos internos.
+        
         Args:
-            data_objects: Lista de Point, Line, Polygon, BezierCurve da cena.
-            mtl_filename: Nome do arquivo MTL a ser referenciado no OBJ.
-
+            data_objects: Lista de objetos da cena (Point, Line, Polygon, BezierCurve)
+            mtl_filename: Nome do arquivo MTL a ser referenciado no OBJ
+            
         Returns:
-            Tupla: (obj_lines, mtl_lines, warnings)
-                   Retorna None para obj_lines/mtl_lines se não houver o que salvar.
+            Tuple[Optional[List[str]], Optional[List[str]], List[str]]: Tupla contendo:
+                - Linhas do arquivo OBJ (ou None se não houver o que salvar)
+                - Linhas do arquivo MTL (ou None se não houver o que salvar)
+                - Lista de avisos gerados durante a geração
         """
         warnings: List[str] = []
         savable_objects = [

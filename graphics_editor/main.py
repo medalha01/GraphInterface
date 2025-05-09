@@ -12,7 +12,23 @@ _RESOURCE_PATH = os.path.join(os.path.dirname(__file__), "resources")
 
 
 def main():
-    """Configura e executa a aplicação do editor gráfico."""
+    """
+    Função principal que configura e executa a aplicação do editor gráfico.
+    
+    Esta função:
+    1. Configura o ambiente Qt com suporte a alta resolução
+    2. Define a localização padrão do sistema
+    3. Inicializa a aplicação Qt
+    4. Configura o ícone da aplicação
+    5. Inicializa a janela principal do editor
+    6. Trata possíveis erros durante a inicialização
+    
+    Returns:
+        None
+    
+    Raises:
+        SystemExit: Se houver erro crítico durante a inicialização
+    """
     # Enable high DPI scaling for better visuals on high-resolution displays
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)

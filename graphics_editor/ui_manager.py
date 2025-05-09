@@ -1,3 +1,8 @@
+"""
+Módulo que gerencia a interface do usuário do editor gráfico.
+Este módulo contém a classe UIManager que coordena todos os elementos visuais da aplicação.
+"""
+
 import os
 from PyQt5.QtCore import QSize, Qt, QLocale, QRectF, QPointF
 from PyQt5.QtWidgets import (
@@ -24,10 +29,28 @@ from .state_manager import DrawingMode, LineClippingAlgorithm
 
 
 class UIManager:
+    """
+    Gerenciador da interface do usuário do editor gráfico.
+    
+    Esta classe é responsável por:
+    - Configurar e gerenciar a barra de menu
+    - Configurar e gerenciar a barra de ferramentas
+    - Configurar e gerenciar a barra de status
+    - Gerenciar ícones e recursos visuais
+    - Atualizar elementos da interface baseado no estado da aplicação
+    """
+
     SLIDER_RANGE_MIN = 0
     SLIDER_RANGE_MAX = 400
 
     def __init__(self, main_window: QMainWindow, state_manager):
+        """
+        Inicializa o gerenciador de interface.
+        
+        Args:
+            main_window: Janela principal da aplicação
+            state_manager: Gerenciador de estado da aplicação
+        """
         self.window = main_window
         self.state_manager = state_manager
         self._icon_base_path = os.path.join(
@@ -50,6 +73,15 @@ class UIManager:
         self.viewport_toggle_action: Optional[QAction] = None
 
     def _get_icon(self, name: str) -> QIcon:
+        """
+        Obtém um ícone do diretório de recursos.
+        
+        Args:
+            name: Nome do arquivo de ícone
+            
+        Returns:
+            QIcon: Ícone carregado ou um ícone de fallback se não encontrado
+        """
         path = os.path.join(self._icon_base_path, name)
         if not os.path.exists(path):
             pixmap = QPixmap(24, 24)
@@ -63,6 +95,16 @@ class UIManager:
         return QIcon(path)
 
     def _create_color_icon(self, color: QColor, size: int = 16) -> QIcon:
+        """
+        Cria um ícone representando uma cor.
+        
+        Args:
+            color: Cor a ser representada
+            size: Tamanho do ícone em pixels
+            
+        Returns:
+            QIcon: Ícone representando a cor
+        """
         pixmap = QPixmap(size, size)
         valid_color = color if color.isValid() else QColor(Qt.black)
         pixmap.fill(valid_color)
@@ -73,7 +115,13 @@ class UIManager:
         return QIcon(pixmap)
 
     def setup_menu_bar(self, menu_callbacks: Dict[str, Callable], get_initial_viewport_visible: Callable[[], bool]) -> None:
-        """Configura a barra de menus."""
+        """
+        Configura a barra de menus da aplicação.
+        
+        Args:
+            menu_callbacks: Dicionário de callbacks para ações do menu
+            get_initial_viewport_visible: Função que retorna o estado inicial de visibilidade do viewport
+        """
         menubar = self.window.menuBar()
 
         # --- Menu Arquivo ---
@@ -140,6 +188,19 @@ class UIManager:
         transform_callback: Callable[[], None],
         clipper_callback: Callable[[LineClippingAlgorithm], None],
     ) -> QToolBar:
+        """
+        Configura a barra de ferramentas da aplicação.
+        
+        Args:
+            mode_callback: Callback para mudança de modo de desenho
+            color_callback: Callback para seleção de cor
+            coord_callback: Callback para entrada de coordenadas
+            transform_callback: Callback para transformações
+            clipper_callback: Callback para seleção de algoritmo de recorte
+            
+        Returns:
+            QToolBar: Barra de ferramentas configurada
+        """
         toolbar = QToolBar("Ferramentas")
         toolbar.setMovable(False)
         toolbar.setIconSize(QSize(24, 24))
@@ -205,6 +266,15 @@ class UIManager:
         return toolbar
 
     def setup_status_bar(self, zoom_callback: Callable[[int], None]) -> QStatusBar:
+        """
+        Configura a barra de status da aplicação.
+        
+        Args:
+            zoom_callback: Callback para mudanças no zoom
+            
+        Returns:
+            QStatusBar: Barra de status configurada
+        """
         status_bar = QStatusBar(self.window)
         self.window.setStatusBar(status_bar)
         self.status_bar = status_bar
@@ -244,10 +314,22 @@ class UIManager:
         return status_bar
 
     def update_color_button(self, color: QColor):
+        """
+        Atualiza o ícone do botão de cor.
+        
+        Args:
+            color: Nova cor a ser exibida
+        """
         if self.color_action:
             self.color_action.setIcon(self._create_color_icon(color, 24))
 
     def update_toolbar_mode_selection(self, mode: DrawingMode):
+        """
+        Atualiza a seleção de modo na barra de ferramentas.
+        
+        Args:
+            mode: Novo modo de desenho selecionado
+        """
         if self.mode_action_group:
             for action in self.mode_action_group.actions():
                 if action.data() == mode:
@@ -255,22 +337,46 @@ class UIManager:
                     break 
 
     def update_clipper_selection(self, algorithm: LineClippingAlgorithm):
+        """
+        Atualiza a seleção do algoritmo de recorte.
+        
+        Args:
+            algorithm: Novo algoritmo de recorte selecionado
+        """
         if self.cs_radio and self.lb_radio:
             is_cs = algorithm == LineClippingAlgorithm.COHEN_SUTHERLAND
             if self.cs_radio.isChecked() != is_cs: self.cs_radio.setChecked(is_cs)
             if self.lb_radio.isChecked() == is_cs: self.lb_radio.setChecked(not is_cs)
 
     def update_status_bar_message(self, message: str):
+        """
+        Atualiza a mensagem na barra de status.
+        
+        Args:
+            message: Nova mensagem a ser exibida
+        """
         if self.status_message_label:
             self.status_message_label.setText(message)
 
     def update_status_bar_coords(self, scene_pos: QPointF):
+        """
+        Atualiza as coordenadas exibidas na barra de status.
+        
+        Args:
+            scene_pos: Nova posição do mouse na cena
+        """
         if self.status_coords_label:
             locale = QLocale()
             coord_text = f"X: {locale.toString(scene_pos.x(), 'f', 2)}  Y: {locale.toString(scene_pos.y(), 'f', 2)}"
             self.status_coords_label.setText(coord_text)
 
     def update_status_bar_mode(self, mode: DrawingMode):
+        """
+        Atualiza o modo exibido na barra de status.
+        
+        Args:
+            mode: Novo modo de desenho
+        """
         if self.status_mode_label:
             mode_map = {
                 DrawingMode.SELECT: "Seleção", DrawingMode.PAN: "Mover Vista",
@@ -281,11 +387,24 @@ class UIManager:
             self.status_mode_label.setText(mode_text)
 
     def update_status_bar_rotation(self, angle: float):
+        """
+        Atualiza o ângulo de rotação exibido na barra de status.
+        
+        Args:
+            angle: Novo ângulo de rotação
+        """
         if self.status_rotation_label:
             rotation_text = f"Rot: {QLocale().toString(angle, 'f', 1)}°"
             self.status_rotation_label.setText(rotation_text)
 
     def update_status_bar_zoom(self, scale: float, slider_value: int):
+        """
+        Atualiza o nível de zoom exibido na barra de status.
+        
+        Args:
+            scale: Nova escala de zoom
+            slider_value: Novo valor do controle deslizante
+        """
         if self.zoom_label:
             zoom_percent = scale * 100
             self.zoom_label.setText(f"Zoom: {QLocale().toString(zoom_percent, 'f', 0)}%")
@@ -295,6 +414,12 @@ class UIManager:
             self.zoom_slider.blockSignals(False)
 
     def update_viewport_action_state(self, is_visible: bool):
+        """
+        Atualiza o estado da ação de visibilidade do viewport.
+        
+        Args:
+            is_visible: Novo estado de visibilidade
+        """
         if self.viewport_toggle_action:
             if self.viewport_toggle_action.isChecked() != is_visible:
                 self.viewport_toggle_action.setChecked(is_visible)

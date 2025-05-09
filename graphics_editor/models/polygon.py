@@ -1,3 +1,8 @@
+"""
+Módulo que define a classe Polygon para representação de polígonos e polilinhas 2D.
+Este módulo contém a implementação de polígonos com vértices, preenchimento e cor.
+"""
+
 # graphics_editor/models/polygon.py
 from PyQt5.QtCore import Qt, QPointF
 from PyQt5.QtGui import QPen, QBrush, QPolygonF, QColor, QPainterPath
@@ -8,10 +13,18 @@ from .point import Point
 
 
 class Polygon:
-    """Representa um polígono 2D (fechado) ou polilinha (aberto)."""
+    """
+    Representa um polígono 2D (fechado) ou polilinha (aberto).
+    
+    Esta classe é responsável por:
+    - Gerenciar vértices do polígono/polilinha
+    - Controlar o estado de preenchimento
+    - Criar a representação gráfica do polígono
+    - Fornecer métodos para manipulação de coordenadas
+    """
 
-    GRAPHICS_BORDER_WIDTH = 2
-    GRAPHICS_FILL_ALPHA = 0.35
+    GRAPHICS_BORDER_WIDTH = 2  # Espessura da borda
+    GRAPHICS_FILL_ALPHA = 0.35  # Transparência do preenchimento
 
     def __init__(
         self,
@@ -20,6 +33,19 @@ class Polygon:
         color: Optional[QColor] = None,
         is_filled: bool = False,
     ):
+        """
+        Inicializa um polígono ou polilinha.
+        
+        Args:
+            points: Lista de pontos que formam o polígono
+            is_open: Se True, cria uma polilinha aberta; se False, cria um polígono fechado
+            color: Cor do polígono (opcional, padrão é preto)
+            is_filled: Se True, o polígono será preenchido (ignorado se is_open=True)
+            
+        Raises:
+            TypeError: Se os pontos não forem instâncias de Point
+            ValueError: Se houver menos de 2 pontos
+        """
         if not isinstance(points, list) or not all(
             isinstance(p, Point) for p in points
         ):
@@ -42,7 +68,14 @@ class Polygon:
         )
 
     def create_graphics_item(self) -> Union[QGraphicsPolygonItem, QGraphicsPathItem]:
-        """Cria a representação gráfica."""
+        """
+        Cria a representação gráfica do polígono como um item da cena.
+        
+        Returns:
+            Union[QGraphicsPolygonItem, QGraphicsPathItem]: Item gráfico representando o polígono
+            - QGraphicsPolygonItem para polígonos fechados
+            - QGraphicsPathItem para polilinhas abertas
+        """
         pen = QPen(self.color, self.GRAPHICS_BORDER_WIDTH)
         brush = QBrush(Qt.NoBrush)
         item: Union[QGraphicsPolygonItem, QGraphicsPathItem]
@@ -72,11 +105,21 @@ class Polygon:
         return item
 
     def get_coords(self) -> List[Tuple[float, float]]:
-        """Retorna lista de coordenadas (x, y) dos vértices."""
+        """
+        Retorna as coordenadas de todos os vértices do polígono.
+        
+        Returns:
+            List[Tuple[float, float]]: Lista contendo as coordenadas dos vértices
+        """
         return [p.get_coords() for p in self.points]
 
     def get_center(self) -> Tuple[float, float]:
-        """Retorna o centroide (média aritmética dos vértices)."""
+        """
+        Retorna o centro geométrico do polígono.
+        
+        Returns:
+            Tuple[float, float]: Tupla contendo as coordenadas do centro
+        """
         if not self.points:
             return (0.0, 0.0)
         sum_x = sum(p.x for p in self.points)
@@ -87,11 +130,19 @@ class Polygon:
         return (sum_x / count, sum_y / count)
 
     def __repr__(self) -> str:
-        """Representação textual."""
+        """
+        Retorna uma representação textual do polígono.
+        
+        Returns:
+            str: String representando o polígono com seus vértices, estado e cor
+        """
         tipo = (
             "Polygon(open)"
             if self.is_open
             else f"Polygon(closed, filled={self.is_filled})"
         )
         points_str = ", ".join(repr(p) for p in self.points)
-        return f"{tipo}[{points_str}], color={self.color.name()}"
+        return (
+            f"Polygon(points=[{points_str}], is_open={self.is_open}, "
+            f"is_filled={self.is_filled}, color={self.color.name()})"
+        )

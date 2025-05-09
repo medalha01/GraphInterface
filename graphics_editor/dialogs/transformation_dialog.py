@@ -1,3 +1,11 @@
+"""
+Módulo que implementa o diálogo de transformações geométricas 2D.
+
+Este módulo contém:
+- TransformationDialog: Diálogo para selecionar e parametrizar transformações 2D
+  (translação, escala, rotação)
+"""
+
 # graphics_editor/dialogs/transformation_dialog.py
 from PyQt5.QtWidgets import (
     QDialog,
@@ -16,9 +24,23 @@ from typing import Optional, Dict, Any
 
 
 class TransformationDialog(QDialog):
-    """Diálogo para selecionar e parametrizar transformações 2D."""
+    """
+    Diálogo para selecionar e parametrizar transformações geométricas 2D.
+    
+    Este diálogo permite:
+    - Selecionar o tipo de transformação (translação, escala, rotação)
+    - Configurar os parâmetros específicos de cada transformação
+    - Validar os parâmetros antes de aplicar
+    - Suporta transformações relativas a diferentes pontos de referência
+    """
 
     def __init__(self, parent: Optional[QWidget] = None):
+        """
+        Inicializa o diálogo de transformações.
+        
+        Args:
+            parent: Widget pai do diálogo
+        """
         super().__init__(parent)
         self.setWindowTitle("Aplicar Transformação 2D")
         self._parameters: Optional[Dict[str, Any]] = (
@@ -28,7 +50,14 @@ class TransformationDialog(QDialog):
         self._update_parameter_fields()  # Mostra campos iniciais corretos
 
     def _setup_ui(self) -> None:
-        """Configura a interface do diálogo."""
+        """
+        Configura a interface do diálogo.
+        
+        Cria e organiza os widgets:
+        - ComboBox para seleção do tipo de transformação
+        - Campos de parâmetros específicos para cada tipo
+        - Botões de ação (Aplicar/Cancelar)
+        """
         main_layout = QVBoxLayout(self)
         locale = QLocale()  # Para formatar spinboxes
 
@@ -126,7 +155,22 @@ class TransformationDialog(QDialog):
         step: float = 0.1,
         decimals: int = 2,
     ) -> QDoubleSpinBox:
-        """Cria um QLabel e QDoubleSpinBox em um QHBoxLayout."""
+        """
+        Cria um par QLabel/QDoubleSpinBox para entrada numérica.
+        
+        Args:
+            layout: Layout pai para adicionar os widgets
+            locale: Configuração regional para formatação
+            label_text: Texto do label
+            min_val: Valor mínimo permitido
+            max_val: Valor máximo permitido
+            default_val: Valor inicial
+            step: Incremento/decremento ao usar setas
+            decimals: Número de casas decimais
+            
+        Returns:
+            QDoubleSpinBox: Campo de entrada criado
+        """
         h_layout = QHBoxLayout()
         label = QLabel(label_text)
         spinbox = QDoubleSpinBox()
@@ -147,7 +191,12 @@ class TransformationDialog(QDialog):
         return spinbox
 
     def _update_parameter_fields(self) -> None:
-        """Mostra/oculta grupos de parâmetros conforme o tipo selecionado."""
+        """
+        Atualiza a visibilidade dos campos de parâmetros.
+        
+        Mostra/oculta os grupos de parâmetros de acordo com o tipo
+        de transformação selecionado no ComboBox.
+        """
         selected_type = self.type_combo.currentText()
         is_translation = selected_type == "Translação"
         is_scaling = "Escala" in selected_type
@@ -163,7 +212,15 @@ class TransformationDialog(QDialog):
         self.adjustSize()
 
     def _on_accept(self) -> None:
-        """Valida e armazena os parâmetros ao clicar OK/Aplicar."""
+        """
+        Valida e armazena os parâmetros ao clicar OK/Aplicar.
+        
+        Coleta os valores dos campos visíveis e os armazena em um dicionário
+        com o tipo de transformação e seus parâmetros específicos.
+        
+        Raises:
+            ValueError: Se o tipo de transformação for desconhecido
+        """
         selected_type = self.type_combo.currentText()
         params: Dict[str, Any] = {}
         epsilon = 1e-9  # Tolerance for near-zero checks (primarily for scale)
@@ -220,6 +277,10 @@ class TransformationDialog(QDialog):
             self._parameters = None
 
     def get_transformation_parameters(self) -> Optional[Dict[str, Any]]:
-        """Retorna parâmetros validados se diálogo foi aceito, senão None."""
-        # Returns the parameters stored during _on_accept if dialog result is Accepted
+        """
+        Obtém os parâmetros da transformação validados.
+        
+        Returns:
+            Dicionário com os parâmetros da transformação ou None se cancelado
+        """
         return self._parameters if self.result() == QDialog.Accepted else None
