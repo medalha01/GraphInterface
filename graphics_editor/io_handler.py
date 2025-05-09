@@ -10,10 +10,22 @@ from PyQt5.QtCore import Qt, QStandardPaths
 class IOHandler:
     """
     Gerencia diálogos de arquivo e leitura/escrita de arquivos OBJ e MTL.
+    
+    Esta classe é responsável por:
+    - Gerenciar diálogos de seleção de arquivo
+    - Ler arquivos OBJ e MTL
+    - Escrever arquivos OBJ e MTL
+    - Tratar codificações de arquivo
+    - Gerenciar erros de I/O
     """
 
     def __init__(self, parent_widget: QWidget):
-        """Inicializa com o widget pai para diálogos."""
+        """
+        Inicializa o gerenciador de I/O.
+        
+        Args:
+            parent_widget: Widget pai para diálogos
+        """
         self._parent = parent_widget
         # Start in user's documents or home directory
         self._last_dir: str = QStandardPaths.writableLocation(
@@ -21,7 +33,12 @@ class IOHandler:
         ) or os.path.expanduser("~")
 
     def prompt_load_obj(self) -> Optional[str]:
-        """Abre diálogo para selecionar um arquivo OBJ."""
+        """
+        Abre diálogo para selecionar um arquivo OBJ.
+        
+        Returns:
+            Optional[str]: Caminho do arquivo selecionado ou None se cancelado
+        """
         filepath, _ = QFileDialog.getOpenFileName(
             self._parent,
             "Abrir Arquivo OBJ",
@@ -37,8 +54,13 @@ class IOHandler:
         self, default_filename: str = "sem_titulo.obj"
     ) -> Optional[str]:
         """
-        Abre diálogo para selecionar um caminho BASE para salvar OBJ/MTL.
-        Retorna o caminho base (sem extensão garantida), ou None se cancelado.
+        Abre diálogo para selecionar um caminho para salvar arquivos OBJ/MTL.
+        
+        Args:
+            default_filename: Nome padrão do arquivo
+            
+        Returns:
+            Optional[str]: Caminho base (sem extensão) ou None se cancelado
         """
         # Ensure default filename has .obj extension
         if default_filename and not default_filename.lower().endswith(".obj"):
@@ -73,10 +95,15 @@ class IOHandler:
     ) -> Optional[Tuple[List[str], Optional[str]]]:
         """
         Lê linhas relevantes de um arquivo OBJ e encontra a referência mtllib.
-
+        
+        Args:
+            filepath: Caminho do arquivo OBJ
+            
         Returns:
-            Tupla: (linhas_obj, nome_mtl) ou None em caso de erro de leitura/IO.
-                   nome_mtl é o nome do arquivo referenciado em 'mtllib', se encontrado.
+            Optional[Tuple[List[str], Optional[str]]]: Tupla contendo:
+                - Lista de linhas do arquivo OBJ
+                - Nome do arquivo MTL referenciado (se encontrado)
+                None em caso de erro
         """
         obj_lines: List[str] = []
         mtl_filename: Optional[str] = None
@@ -148,11 +175,14 @@ class IOHandler:
     def read_mtl_file(self, filepath: str) -> Tuple[Dict[str, QColor], List[str]]:
         """
         Analisa um arquivo MTL, focando em 'newmtl' e 'Kd' (cor difusa).
-
+        
+        Args:
+            filepath: Caminho do arquivo MTL
+            
         Returns:
-            Tupla: (dicionario_cores, lista_avisos)
-                   dicionario_cores: {material_name: QColor}
-                   lista_avisos: List of warnings encountered during parsing.
+            Tuple[Dict[str, QColor], List[str]]: Tupla contendo:
+                - Dicionário de cores dos materiais {nome_material: cor}
+                - Lista de avisos encontrados durante a leitura
         """
         material_colors: Dict[str, QColor] = {}
         warnings: List[str] = []
@@ -241,15 +271,14 @@ class IOHandler:
     ) -> bool:
         """
         Escreve as linhas OBJ e (se houver) MTL nos arquivos correspondentes.
-        Overwrites existing files without confirmation (confirmation handled by getSaveFileName).
-
+        
         Args:
-            base_filepath: Caminho base (e.g., 'meudir/arquivo'). Extensions (.obj, .mtl) will be added.
-            obj_lines: List of strings for the OBJ file content.
-            mtl_lines: List of strings for the MTL file content (or None).
-
+            base_filepath: Caminho base (sem extensão)
+            obj_lines: Linhas para o arquivo OBJ
+            mtl_lines: Linhas para o arquivo MTL (opcional)
+            
         Returns:
-            True se a escrita foi bem sucedida (ou se não havia MTL para salvar), False se ocorreu erro de escrita.
+            bool: True se a escrita foi bem sucedida, False caso contrário
         """
         obj_filepath = base_filepath + ".obj"
         mtl_filepath = base_filepath + ".mtl"

@@ -1,3 +1,8 @@
+"""
+Módulo que define o serviço de operações de arquivo para o editor gráfico.
+Este módulo contém a implementação do serviço responsável por carregar e salvar arquivos OBJ/MTL.
+"""
+
 # graphics_editor/services/file_operation_service.py
 import os
 from typing import List, Optional, Tuple, Dict, Callable, Any
@@ -15,7 +20,13 @@ from ..controllers.drawing_controller import DrawingController
 
 class FileOperationService(QObject):
     """
-    Handles file operations like loading and saving OBJ files.
+    Serviço responsável por gerenciar operações de arquivo do editor gráfico.
+    
+    Este serviço é responsável por:
+    - Carregar arquivos OBJ/MTL
+    - Salvar a cena atual em arquivos OBJ/MTL
+    - Gerenciar o estado de salvamento da cena
+    - Tratar avisos e erros durante operações de arquivo
     """
 
     status_message_requested = pyqtSignal(str, int)
@@ -31,6 +42,19 @@ class FileOperationService(QObject):
         check_unsaved_changes_func: Callable[[str], bool],
         clear_scene_confirmed_func: Callable[[], None],
     ):
+        """
+        Inicializa o serviço de operações de arquivo.
+        
+        Args:
+            parent_widget: Widget pai para diálogos
+            io_handler: Manipulador de entrada/saída
+            object_manager: Gerenciador de objetos
+            state_manager: Gerenciador de estado do editor
+            scene_controller: Controlador da cena
+            drawing_controller: Controlador de desenho
+            check_unsaved_changes_func: Função para verificar alterações não salvas
+            clear_scene_confirmed_func: Função para limpar a cena
+        """
         super().__init__(parent_widget)
         self.parent_widget = parent_widget
         self.io_handler = io_handler
@@ -42,6 +66,16 @@ class FileOperationService(QObject):
         self.clear_scene_confirmed = clear_scene_confirmed_func
 
     def prompt_load_obj(self) -> Tuple[Optional[str], int, int, List[str]]:
+        """
+        Solicita ao usuário selecionar um arquivo OBJ para carregar.
+        
+        Returns:
+            Tuple[Optional[str], int, int, List[str]]: Tupla contendo:
+                - Caminho do arquivo carregado (ou None se cancelado)
+                - Número de objetos carregados com sucesso
+                - Número de objetos que falharam ao carregar
+                - Lista de avisos/erros
+        """
         if not self.check_unsaved_changes("carregar um novo arquivo"):
             return (
                 None,
@@ -58,6 +92,20 @@ class FileOperationService(QObject):
     def load_obj_file(
         self, obj_filepath: str, clear_before_load: bool = True
     ) -> Tuple[str, int, int, List[str]]:
+        """
+        Carrega um arquivo OBJ e seus materiais associados.
+        
+        Args:
+            obj_filepath: Caminho do arquivo OBJ
+            clear_before_load: Se True, limpa a cena antes de carregar
+            
+        Returns:
+            Tuple[str, int, int, List[str]]: Tupla contendo:
+                - Caminho do arquivo carregado
+                - Número de objetos carregados com sucesso
+                - Número de objetos que falharam ao carregar
+                - Lista de avisos/erros
+        """
         self.status_message_requested.emit(
             f"Carregando {os.path.basename(obj_filepath)}...", 0
         )
@@ -118,6 +166,18 @@ class FileOperationService(QObject):
     def _read_obj_and_mtl_data(
         self, obj_filepath: str
     ) -> Tuple[Optional[List[str]], Dict[str, QColor], List[str]]:
+        """
+        Lê os dados do arquivo OBJ e seu arquivo MTL associado.
+        
+        Args:
+            obj_filepath: Caminho do arquivo OBJ
+            
+        Returns:
+            Tuple[Optional[List[str]], Dict[str, QColor], List[str]]: Tupla contendo:
+                - Linhas do arquivo OBJ (ou None se falhar)
+                - Dicionário de cores dos materiais
+                - Lista de avisos/erros
+        """
         all_warnings: List[str] = []
         material_colors: Dict[str, QColor] = {}
         read_result = self.io_handler.read_obj_lines(obj_filepath)
@@ -143,6 +203,12 @@ class FileOperationService(QObject):
         return obj_lines, material_colors, all_warnings
 
     def prompt_save_as_obj(self) -> bool:
+        """
+        Solicita ao usuário selecionar um local para salvar a cena como OBJ.
+        
+        Returns:
+            bool: True se o salvamento foi bem-sucedido, False caso contrário
+        """
         self.drawing_controller.cancel_current_drawing()
         current_path = self.state_manager.current_filepath()
         default_name = (
@@ -175,6 +241,13 @@ class FileOperationService(QObject):
             return False
 
     def save_current_file(self) -> bool:
+        """
+        Salva a cena atual no arquivo OBJ atual.
+        Se não houver arquivo atual, solicita um novo local.
+        
+        Returns:
+            bool: True se o salvamento foi bem-sucedido, False caso contrário
+        """
         current_path = self.state_manager.current_filepath()
         if not current_path:
             return self.prompt_save_as_obj()
@@ -191,6 +264,18 @@ class FileOperationService(QObject):
             return success
 
     def _save_to_file(self, base_filepath: str) -> Tuple[bool, List[str], bool]:
+        """
+        Salva a cena atual em arquivos OBJ e MTL.
+        
+        Args:
+            base_filepath: Caminho base para os arquivos (sem extensão)
+            
+        Returns:
+            Tuple[bool, List[str], bool]: Tupla contendo:
+                - True se o salvamento foi bem-sucedido
+                - Lista de avisos/erros
+                - True se um arquivo MTL foi gerado
+        """
         self.status_message_requested.emit(
             f"Salvando em {os.path.basename(base_filepath)}...", 0
         )

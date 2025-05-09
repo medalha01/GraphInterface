@@ -1,3 +1,11 @@
+"""
+Módulo que implementa o controlador de transformações do editor gráfico.
+
+Este módulo contém:
+- TransformationController: Controlador responsável por aplicar transformações
+  geométricas aos objetos gráficos (translação, escala, rotação)
+"""
+
 # graphics_editor/controllers/transformation_controller.py
 import numpy as np
 from PyQt5.QtCore import QObject, pyqtSignal
@@ -18,17 +26,37 @@ TRANSFORMABLE_TYPES = (Point, Line, Polygon, BezierCurve)
 
 class TransformationController(QObject):
     """
-    Controlador para aplicar transformações 2D aos objetos de dados.
+    Controlador responsável por aplicar transformações geométricas aos objetos.
+    
+    Este controlador gerencia:
+    - Aplicação de transformações 2D (translação, escala, rotação)
+    - Interação com o usuário para obter parâmetros de transformação
+    - Validação e tratamento de erros durante as transformações
+    - Sinalização de objetos transformados
     """
 
     object_transformed = pyqtSignal(object)  # Emits the modified DataObject
 
     def __init__(self, parent: Optional[QWidget] = None):
+        """
+        Inicializa o controlador de transformações.
+        
+        Args:
+            parent: Widget pai para diálogos (opcional)
+        """
         super().__init__(parent)
         self._parent_widget = parent
 
     def request_transformation(self, data_object: TransformableObject) -> None:
-        """Initiates the transformation process for a single DataObject."""
+        """
+        Inicia o processo de transformação para um objeto.
+        
+        Abre um diálogo para o usuário configurar os parâmetros da transformação
+        e aplica a transformação se o usuário confirmar.
+        
+        Args:
+            data_object: Objeto a ser transformado
+        """
         # Validate object type using the tuple for cleaner check
         if not isinstance(data_object, TRANSFORMABLE_TYPES):
             QMessageBox.warning(
@@ -47,7 +75,18 @@ class TransformationController(QObject):
     def _perform_transformation(
         self, data_object: TransformableObject, params: Dict[str, Any]
     ) -> None:
-        """Applies the geometric transformation to the DataObject's coordinates."""
+        """
+        Aplica uma transformação geométrica ao objeto.
+        
+        Args:
+            data_object: Objeto a ser transformado
+            params: Dicionário com os parâmetros da transformação:
+                - type: Tipo de transformação ('translate', 'scale_center', 'rotate_origin', 'rotate_center', 'rotate_arbitrary')
+                - dx, dy: Deslocamentos para translação
+                - sx, sy: Fatores de escala
+                - angle: Ângulo de rotação em graus
+                - px, py: Ponto de rotação para rotação arbitrária
+        """
         transform_type = params.get("type", "desconhecido")
 
         try:

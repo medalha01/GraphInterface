@@ -1,3 +1,11 @@
+"""
+Módulo que implementa diálogos para entrada de coordenadas e propriedades de objetos gráficos.
+
+Este módulo contém:
+- CoordinateInputDialog: Diálogo para inserir coordenadas e propriedades de objetos
+  (ponto, linha, polígono, curva de Bézier)
+"""
+
 # graphics_editor/dialogs/coordinates_input.py
 from PyQt5.QtWidgets import (
     QDialog,
@@ -21,12 +29,26 @@ import os
 
 
 class CoordinateInputDialog(QDialog):
-    """Diálogo para inserir coordenadas e cor para criar formas."""
+    """
+    Diálogo para inserir coordenadas e propriedades de objetos gráficos.
+    
+    Este diálogo permite:
+    - Inserir coordenadas para diferentes tipos de objetos (ponto, linha, polígono, curva de Bézier)
+    - Selecionar a cor do objeto
+    - Configurar propriedades específicas (ex: polígono aberto/fechado, preenchido)
+    - Validar as entradas antes de aceitar
+    """
 
     def __init__(self, parent: Optional[QWidget] = None, mode: str = "point"):
         """
+        Inicializa o diálogo de entrada de coordenadas.
+        
         Args:
-            mode: 'point', 'line', 'polygon', or 'bezier'.
+            parent: Widget pai do diálogo
+            mode: Modo de operação ('point', 'line', 'polygon', 'bezier')
+            
+        Raises:
+            ValueError: Se o modo for inválido
         """
         super().__init__(parent)
         self.mode: str = mode.lower()
@@ -70,20 +92,40 @@ class CoordinateInputDialog(QDialog):
         self.setMinimumWidth(350)
 
     def set_initial_color(self, color: QColor) -> None:
-        """Define a cor inicial."""
+        """
+        Define a cor inicial do objeto.
+        
+        Args:
+            color: Cor inicial a ser definida
+        """
         if color.isValid():
             self._selected_color = color
             self._update_color_button_preview()
 
     def _get_icon(self, name: str) -> QIcon:
-        """Carrega ícone ou placeholder."""
+        """
+        Carrega um ícone do diretório de recursos.
+        
+        Args:
+            name: Nome do arquivo de ícone
+            
+        Returns:
+            QIcon: Ícone carregado ou ícone vazio se não encontrado
+        """
         icon_path = os.path.join(self._icon_base_path, name)
         return (
             QIcon(icon_path) if os.path.exists(icon_path) else QIcon()
         )  # Retorna ícone vazio se não achar
 
     def _setup_ui(self) -> None:
-        """Configura a interface do diálogo."""
+        """
+        Configura a interface do diálogo.
+        
+        Cria e organiza os widgets de acordo com o modo de operação:
+        - Ponto: Campos X, Y
+        - Linha: Campos X1, Y1, X2, Y2
+        - Polígono/Bezier: Lista de pontos com opções específicas
+        """
         main_layout = QVBoxLayout(self)
 
         # --- Entradas de Coordenadas ---
@@ -182,17 +224,30 @@ class CoordinateInputDialog(QDialog):
         main_layout.addLayout(btn_layout)
 
     def _on_polygon_open_toggled(self, checked: bool):
-         """Callback when the 'open polygon' checkbox changes state."""
-         if self.filled_polygon_checkbox:
-              self.filled_polygon_checkbox.setDisabled(checked)
-              if checked:
-                   self.filled_polygon_checkbox.setChecked(False)
-
+        """
+        Callback quando o checkbox de polígono aberto muda de estado.
+        
+        Args:
+            checked: Novo estado do checkbox
+        """
+        if self.filled_polygon_checkbox:
+            self.filled_polygon_checkbox.setDisabled(checked)
+            if checked:
+                self.filled_polygon_checkbox.setChecked(False)
 
     def _create_coord_input(
         self, parent_layout: Union[QVBoxLayout, QHBoxLayout], label_text: str
     ) -> QLineEdit:
-        """Cria um par QLabel/QLineEdit para uma coordenada."""
+        """
+        Cria um par QLabel/QLineEdit para uma coordenada.
+        
+        Args:
+            parent_layout: Layout pai para adicionar os widgets
+            label_text: Texto do label
+            
+        Returns:
+            QLineEdit: Campo de entrada criado
+        """
         h_layout = QHBoxLayout()
         label = QLabel(label_text)
         label.setFixedWidth(50)
@@ -207,7 +262,12 @@ class CoordinateInputDialog(QDialog):
         return input_field
 
     def _add_list_point_inputs(self) -> None:
-        """Adiciona campos X, Y para um ponto na lista (polígono/bezier)."""
+        """
+        Adiciona campos X, Y para um ponto na lista (polígono/bezier).
+        
+        Cria um novo par de campos de entrada com validação numérica
+        e os adiciona à lista de pontos.
+        """
         if self.point_list_layout is None: return
 
         point_index = len(self.point_widgets) + 1
@@ -232,14 +292,24 @@ class CoordinateInputDialog(QDialog):
         self.point_widgets.append((x_input, y_input))
 
     def _choose_color(self) -> None:
-        """Abre QColorDialog."""
+        """
+        Abre o diálogo de seleção de cor.
+        
+        Atualiza a cor selecionada e a visualização do botão
+        quando uma nova cor é escolhida.
+        """
         color = QColorDialog.getColor(self._selected_color, self, "Selecionar Cor")
         if color.isValid():
             self._selected_color = color
             self._update_color_button_preview()
 
     def _update_color_button_preview(self) -> None:
-        """Atualiza a cor do botão."""
+        """
+        Atualiza a cor do botão de seleção de cor.
+        
+        Aplica a cor selecionada como fundo do botão
+        ou uma cor padrão se nenhuma cor válida estiver selecionada.
+        """
         if self._selected_color.isValid():
             self.color_button.setStyleSheet(
                 f"background-color: {self._selected_color.name()}; border: 1px solid gray;"
@@ -250,7 +320,12 @@ class CoordinateInputDialog(QDialog):
             )
 
     def _on_accept(self) -> None:
-        """Valida os dados e, se OK, armazena e fecha."""
+        """
+        Valida os dados e, se OK, armazena e fecha o diálogo.
+        
+        Se a validação falhar, exibe uma mensagem de erro
+        e mantém o diálogo aberto.
+        """
         try:
             self._validated_data = self._validate_and_get_data()
             self.accept()
@@ -261,7 +336,16 @@ class CoordinateInputDialog(QDialog):
     def _validate_and_get_data(self) -> Dict[str, Any]:
         """
         Valida as entradas e retorna um dicionário com os dados formatados.
-        Levanta ValueError com mensagem de erro se a validação falhar.
+        
+        Returns:
+            Dict[str, Any]: Dicionário contendo:
+                - coords: Lista de coordenadas (x, y)
+                - color: Cor selecionada
+                - is_open: Se é um polígono aberto (apenas para polígonos)
+                - is_filled: Se é um polígono preenchido (apenas para polígonos)
+                
+        Raises:
+            ValueError: Se a validação falhar, com mensagem explicativa
         """
         data: Dict[str, Any] = {"coords": []}
         raw_texts: List[Tuple[Optional[str], Optional[str]]] = []
@@ -342,5 +426,11 @@ class CoordinateInputDialog(QDialog):
         return data
 
     def get_validated_data(self) -> Optional[Dict[str, Any]]:
-        """Retorna os dados validados se o diálogo foi aceito, senão None."""
+        """
+        Retorna os dados validados se o diálogo foi aceito.
+        
+        Returns:
+            Optional[Dict[str, Any]]: Dicionário com os dados validados ou None se o diálogo
+                foi cancelado ou a validação falhou
+        """
         return self._validated_data if self.result() == QDialog.Accepted else None

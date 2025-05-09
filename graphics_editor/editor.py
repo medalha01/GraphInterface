@@ -63,12 +63,28 @@ DATA_OBJECT_TYPES = (Point, Line, Polygon, BezierCurve)
 
 
 class GraphicsEditor(QMainWindow):
-    """Janela principal da aplicação para o editor gráfico 2D (Coordenador)."""
+    """
+    Janela principal da aplicação para o editor gráfico 2D.
+    
+    Esta classe coordena todos os componentes do editor gráfico, incluindo:
+    - Gerenciamento da interface do usuário
+    - Controle de desenho
+    - Transformações de objetos
+    - Operações de arquivo
+    - Gerenciamento de estado
+    - Visualização da cena
+    """
 
     BEZIER_CLIPPING_SAMPLES_PER_SEGMENT = 20
-    BEZIER_SAVE_SAMPLES_PER_SEGMENT = 20  # Adicionado para consistência
+    BEZIER_SAVE_SAMPLES_PER_SEGMENT = 20
 
     def __init__(self, parent=None):
+        """
+        Inicializa o editor gráfico.
+        
+        Args:
+            parent: Widget pai da janela principal
+        """
         super().__init__(parent)
         self.setWindowTitle("Editor Gráfico 2D - Nova Cena")
         self.resize(1000, 750)
@@ -87,12 +103,21 @@ class GraphicsEditor(QMainWindow):
         self._initialize_ui_state()
 
     def _setup_core_components(self) -> None:
+        """
+        Configura os componentes principais da cena e visualização.
+        Inicializa a cena gráfica e a visualização central.
+        """
         self._scene = QGraphicsScene(self)
         self._scene.setSceneRect(-50000, -50000, 100000, 100000)
         self._view = GraphicsView(self._scene, self)
         self.setCentralWidget(self._view)
 
     def _setup_managers_controllers_services(self) -> None:
+        """
+        Configura todos os gerenciadores, controladores e serviços necessários.
+        Inicializa componentes para gerenciamento de estado, interface, desenho,
+        transformações, entrada/saída e operações de arquivo.
+        """
         self._state_manager = EditorStateManager(self)
         self._ui_manager = UIManager(self, self._state_manager)
         self._drawing_controller = DrawingController(
@@ -122,6 +147,10 @@ class GraphicsEditor(QMainWindow):
         )
 
     def _setup_special_items(self) -> None:
+        """
+        Configura itens especiais da cena, como o retângulo de recorte.
+        Define as propriedades visuais e comportamentais destes itens.
+        """
         self._clip_rect_item = QGraphicsRectItem(self._state_manager.clip_rect())
         pen = QPen(QColor(0, 0, 255, 100), 1, Qt.DashLine)
         pen.setCosmetic(True)
@@ -133,6 +162,10 @@ class GraphicsEditor(QMainWindow):
         self._scene.addItem(self._clip_rect_item)
 
     def _setup_ui_elements(self) -> None:
+        """
+        Configura os elementos da interface do usuário.
+        Inicializa a barra de menu, barra de ferramentas e barra de status.
+        """
         menu_callbacks = {
             "new_scene": self._prompt_clear_scene,
             "load_obj": self._handle_load_obj_action,
@@ -157,11 +190,19 @@ class GraphicsEditor(QMainWindow):
         self._ui_manager.setup_status_bar(zoom_callback=self._on_zoom_slider_changed)
 
     def _initialize_ui_state(self) -> None:
+        """
+        Inicializa o estado inicial da interface do usuário.
+        Atualiza a interação da visualização e controles.
+        """
         self._update_view_interaction()
         self._update_window_title()
         QTimer.singleShot(0, self._update_view_controls)
 
     def _connect_signals(self) -> None:
+        """
+        Conecta todos os sinais e slots necessários para a comunicação entre componentes.
+        Estabelece as conexões entre eventos do mouse, mudanças de estado e atualizações da interface.
+        """
         self._view.scene_left_clicked.connect(self._handle_scene_left_click)
         self._view.scene_right_clicked.connect(self._handle_scene_right_click)
         self._view.scene_mouse_moved.connect(self._handle_scene_mouse_move)
@@ -213,10 +254,22 @@ class GraphicsEditor(QMainWindow):
             )
 
     def _handle_scene_modification(self, requires_saving: bool):
+        """
+        Manipula modificações na cena.
+        
+        Args:
+            requires_saving: Indica se as modificações requerem salvamento
+        """
         if requires_saving:
             self._state_manager.mark_as_modified()
 
     def _handle_scene_left_click(self, scene_pos: QPointF):
+        """
+        Manipula cliques do botão esquerdo do mouse na cena.
+        
+        Args:
+            scene_pos: Posição do clique na cena
+        """
         mode = self._state_manager.drawing_mode()
         if mode in [
             DrawingMode.POINT,
@@ -227,19 +280,40 @@ class GraphicsEditor(QMainWindow):
             self._drawing_controller.handle_scene_left_click(scene_pos)
 
     def _handle_scene_right_click(self, scene_pos: QPointF):
+        """
+        Manipula cliques do botão direito do mouse na cena.
+        
+        Args:
+            scene_pos: Posição do clique na cena
+        """
         mode = self._state_manager.drawing_mode()
         if mode in [DrawingMode.POLYGON, DrawingMode.BEZIER]:
             self._drawing_controller.handle_scene_right_click(scene_pos)
 
     def _handle_scene_mouse_move(self, scene_pos: QPointF):
+        """
+        Manipula o movimento do mouse na cena.
+        
+        Args:
+            scene_pos: Posição atual do mouse na cena
+        """
         mode = self._state_manager.drawing_mode()
         if mode in [DrawingMode.LINE, DrawingMode.POLYGON, DrawingMode.BEZIER]:
             self._drawing_controller.handle_scene_mouse_move(scene_pos)
 
     def _set_drawing_mode(self, mode: DrawingMode):
+        """
+        Define o modo de desenho atual.
+        
+        Args:
+            mode: Novo modo de desenho a ser ativado
+        """
         self._state_manager.set_drawing_mode(mode)
 
     def _update_view_interaction(self):
+        """
+        Atualiza o modo de interação da visualização baseado no modo de desenho atual.
+        """
         mode = self._state_manager.drawing_mode()
         if mode == DrawingMode.SELECT:
             self._view.set_drag_mode(QGraphicsView.RubberBandDrag)
@@ -259,6 +333,12 @@ class GraphicsEditor(QMainWindow):
         self._set_status_message(f"Clipping de linha: {algo_name}", 2000)
 
     def _on_zoom_slider_changed(self, value: int):
+        """
+        Manipula mudanças no controle deslizante de zoom.
+        
+        Args:
+            value: Novo valor do zoom (0-100)
+        """
         min_slider, max_slider = (
             self._ui_manager.SLIDER_RANGE_MIN,
             self._ui_manager.SLIDER_RANGE_MAX,
@@ -274,10 +354,17 @@ class GraphicsEditor(QMainWindow):
         self._view.set_scale(target_scale, center_on_mouse=False)
 
     def _update_view_controls(self):
+        """
+        Atualiza todos os controles de visualização.
+        Atualiza controles de zoom e rotação.
+        """
         self._update_zoom_controls()
         self._update_rotation_controls()
 
     def _update_zoom_controls(self):
+        """
+        Atualiza os controles de zoom baseado no estado atual da visualização.
+        """
         current_scale = self._view.get_scale()
         min_scale, max_scale = self._view.VIEW_SCALE_MIN, self._view.VIEW_SCALE_MAX
         min_slider, max_slider = (
@@ -297,14 +384,25 @@ class GraphicsEditor(QMainWindow):
         self._ui_manager.update_status_bar_zoom(current_scale, slider_value)
 
     def _update_rotation_controls(self):
+        """
+        Atualiza os controles de rotação baseado no estado atual da visualização.
+        """
         rotation_angle = self._view.get_rotation_angle()
         self._ui_manager.update_status_bar_rotation(rotation_angle)
 
     def _reset_view(self):
+        """
+        Reseta a visualização para seu estado inicial.
+        Restaura zoom e rotação para valores padrão.
+        """
         self._view.reset_view()
         self._view.centerOn(self._state_manager.clip_rect().center())
 
     def _delete_selected_items(self):
+        """
+        Remove os itens selecionados da cena.
+        Atualiza o estado de modificação após a remoção.
+        """
         selected_data_objects = self._scene_controller.get_selected_data_objects()
         if not selected_data_objects:
             self._set_status_message("Nenhum item selecionado para excluir.", 2000)
@@ -318,6 +416,10 @@ class GraphicsEditor(QMainWindow):
             self._set_status_message(f"{removed_count} item(ns) excluído(s).", 2000)
 
     def _clear_scene_confirmed(self):
+        """
+        Limpa a cena após confirmação do usuário.
+        Remove todos os objetos e reseta o estado.
+        """
         self._drawing_controller.cancel_current_drawing()
         self._scene_controller.clear_scene()
         self._reset_view()
@@ -326,11 +428,19 @@ class GraphicsEditor(QMainWindow):
         self._set_status_message("Nova cena criada.", 2000)
 
     def _prompt_clear_scene(self):
+        """
+        Solicita confirmação do usuário antes de limpar a cena.
+        Verifica se há alterações não salvas antes de prosseguir.
+        """
         self._drawing_controller.cancel_current_drawing()
         if self._check_unsaved_changes("limpar a cena"):
             self._clear_scene_confirmed()
 
     def _select_drawing_color(self):
+        """
+        Abre o diálogo de seleção de cor para o desenho.
+        Atualiza a cor atual de desenho após a seleção.
+        """
         initial_color = self._state_manager.draw_color()
         new_color = QColorDialog.getColor(
             initial_color, self, "Selecionar Cor de Desenho"
@@ -339,6 +449,13 @@ class GraphicsEditor(QMainWindow):
             self._state_manager.set_draw_color(new_color)
 
     def _set_status_message(self, message: str, timeout: int = 3000):
+        """
+        Define uma mensagem temporária na barra de status.
+        
+        Args:
+            message: Mensagem a ser exibida
+            timeout: Tempo em milissegundos para exibir a mensagem
+        """
         if not hasattr(self, "_ui_manager") or self._ui_manager is None:
             return
         self._ui_manager.update_status_bar_message(message)
@@ -347,6 +464,10 @@ class GraphicsEditor(QMainWindow):
             self._status_reset_timer.start(timeout)
 
     def _update_window_title(self, *args):
+        """
+        Atualiza o título da janela com informações do estado atual.
+        Inclui nome do arquivo e indicador de modificações não salvas.
+        """
         title = "Editor Gráfico 2D - "
         filepath = self._state_manager.current_filepath()
         filename = os.path.basename(filepath) if filepath else "Nova Cena"
@@ -356,6 +477,15 @@ class GraphicsEditor(QMainWindow):
         self.setWindowTitle(title)
 
     def _check_unsaved_changes(self, action_description: str = "prosseguir") -> bool:
+        """
+        Verifica se há alterações não salvas antes de executar uma ação.
+        
+        Args:
+            action_description: Descrição da ação que será executada
+            
+        Returns:
+            bool: True se pode prosseguir, False se deve cancelar
+        """
         if not self._state_manager.has_unsaved_changes():
             return True
         reply = QMessageBox.warning(
@@ -379,6 +509,10 @@ class GraphicsEditor(QMainWindow):
             return False
 
     def _open_coordinate_input_dialog(self):
+        """
+        Abre o diálogo de entrada de coordenadas.
+        Permite ao usuário inserir coordenadas precisas para novos objetos.
+        """
         self._drawing_controller.cancel_current_drawing()
         dialog_mode_map = {
             DrawingMode.POINT: "point",
@@ -409,6 +543,16 @@ class GraphicsEditor(QMainWindow):
     def _create_data_object_from_dialog(
         self, result_data: Dict[str, Any], dialog_mode_str: str
     ) -> Optional[DataObject]:
+        """
+        Cria um objeto de dados baseado nos resultados do diálogo.
+        
+        Args:
+            result_data: Dados inseridos pelo usuário
+            dialog_mode_str: Modo do diálogo que gerou os dados
+            
+        Returns:
+            Optional[DataObject]: Objeto criado ou None se inválido
+        """
         color = result_data.get("color", QColor(Qt.black))
         coords = result_data.get("coords", [])
         if not coords:
@@ -437,6 +581,10 @@ class GraphicsEditor(QMainWindow):
             raise ValueError(f"Erro ao criar {dialog_mode_str}: {e}")
 
     def _open_transformation_dialog(self):
+        """
+        Abre o diálogo de transformação para objetos selecionados.
+        Permite aplicar transformações geométricas aos objetos.
+        """
         selected_objects = self._scene_controller.get_selected_data_objects()
         if len(selected_objects) != 1:
             QMessageBox.warning(
@@ -450,6 +598,10 @@ class GraphicsEditor(QMainWindow):
         self._transformation_controller.request_transformation(data_object)
 
     def _handle_load_obj_action(self):
+        """
+        Manipula a ação de carregar arquivo OBJ.
+        Verifica alterações não salvas e carrega o arquivo selecionado.
+        """
         filepath, num_added, num_clipped_out, warnings = (
             self._file_operation_service.prompt_load_obj()
         )
@@ -468,6 +620,15 @@ class GraphicsEditor(QMainWindow):
         num_clipped_out: int,
         warnings: List[str],
     ):
+        """
+        Reporta os resultados do carregamento de um arquivo OBJ.
+        
+        Args:
+            obj_filepath: Caminho do arquivo carregado
+            num_added: Número de objetos adicionados
+            num_clipped_out: Número de objetos recortados
+            warnings: Lista de avisos gerados durante o carregamento
+        """
         base_filename = (
             os.path.basename(obj_filepath) if obj_filepath else "desconhecido"
         )
@@ -513,6 +674,16 @@ class GraphicsEditor(QMainWindow):
         has_mtl: bool = False,
         is_generation_error: bool = False,
     ):
+        """
+        Reporta os resultados do salvamento de um arquivo.
+        
+        Args:
+            base_filepath: Caminho base do arquivo
+            success: Indica se o salvamento foi bem sucedido
+            warnings: Lista de avisos gerados durante o salvamento
+            has_mtl: Indica se um arquivo MTL foi gerado
+            is_generation_error: Indica se houve erro na geração do arquivo
+        """
         base_filename = os.path.basename(base_filepath)
         if not success and not warnings:
             self._set_status_message(
@@ -545,6 +716,12 @@ class GraphicsEditor(QMainWindow):
             self._set_status_message(msg, 5000)
 
     def _toggle_viewport_visibility(self, checked: bool):
+        """
+        Alterna a visibilidade do retângulo de recorte.
+        
+        Args:
+            checked: Estado do checkbox de visibilidade
+        """
         self._clip_rect_item.setVisible(checked)
         self._ui_manager.update_viewport_action_state(checked)
         # Changing viewport visibility might affect how users perceive clipping,
@@ -553,6 +730,12 @@ class GraphicsEditor(QMainWindow):
         self._scene.update()
 
     def _update_clip_rect_item(self, rect: QRectF):
+        """
+        Atualiza o retângulo de recorte na cena.
+        
+        Args:
+            rect: Novo retângulo de recorte
+        """
         normalized_rect = rect.normalized()
         if self._clip_rect_item.rect() != normalized_rect:
             self._clip_rect_item.setRect(normalized_rect)
@@ -560,6 +743,10 @@ class GraphicsEditor(QMainWindow):
         # in response to state_manager.clip_rect_changed.
 
     def _prompt_polygon_properties(self):
+        """
+        Solicita propriedades adicionais para um polígono.
+        Permite definir preenchimento e outras características.
+        """
         type_reply = QMessageBox.question(
             self,
             "Tipo de Polígono",
@@ -598,6 +785,13 @@ class GraphicsEditor(QMainWindow):
         self._drawing_controller.set_pending_polygon_properties(is_open, is_filled)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        """
+        Manipula o evento de fechamento da janela.
+        Verifica alterações não salvas antes de fechar.
+        
+        Args:
+            event: Evento de fechamento
+        """
         self._drawing_controller.cancel_current_drawing()
         if self._check_unsaved_changes("fechar a aplicação"):
             event.accept()

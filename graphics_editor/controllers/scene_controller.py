@@ -31,12 +31,29 @@ SC_IS_CLIPPED_BEZIER_AS_POLYGON_KEY = Qt.UserRole + 2
 
 
 class BezierClipStatus(Enum):
+    """
+    Enumeração que representa o status de recorte de uma curva de Bézier em relação à janela de visualização.
+    
+    Atributos:
+        FULLY_INSIDE: Curva completamente dentro da janela de visualização
+        FULLY_OUTSIDE: Curva completamente fora da janela de visualização
+        PARTIALLY_INSIDE: Curva parcialmente dentro da janela de visualização
+    """
     FULLY_INSIDE = 1
     FULLY_OUTSIDE = 2
     PARTIALLY_INSIDE = 3
 
 
 class SceneController(QObject):
+    """
+    Controlador responsável por gerenciar a cena gráfica e suas interações.
+    
+    Esta classe coordena a exibição e manipulação de objetos gráficos na cena,
+    incluindo operações de recorte, atualização e gerenciamento de estado.
+    
+    Atributos:
+        scene_modified: Sinal emitido quando a cena é modificada
+    """
     scene_modified = pyqtSignal(bool)
 
     def __init__(
@@ -45,6 +62,14 @@ class SceneController(QObject):
         state_manager: EditorStateManager,
         parent: Optional[QObject] = None,
     ):
+        """
+        Inicializa o controlador da cena.
+        
+        Args:
+            scene: A cena gráfica a ser controlada
+            state_manager: Gerenciador de estado do editor
+            parent: Objeto pai opcional
+        """
         super().__init__(parent)
         self._scene = scene
         self._state_manager = state_manager
@@ -63,11 +88,17 @@ class SceneController(QObject):
         )
 
     def _on_clipping_parameters_changed(self, *args):
+        """
+        Atualiza os parâmetros de recorte quando há mudanças nas configurações.
+        """
         self._clip_rect_tuple = self._get_clip_rect_tuple()
         self._clipper_func = self._get_clipper_function()
         self.refresh_all_object_clipping()
 
     def refresh_all_object_clipping(self):
+        """
+        Atualiza o recorte de todos os objetos na cena.
+        """
         original_objects_to_refresh = []
         for item_id in list(self._id_to_item_map.keys()):
             item = self._id_to_item_map.get(item_id)
@@ -81,10 +112,22 @@ class SceneController(QObject):
         self._scene.update()
 
     def _get_clip_rect_tuple(self) -> clp.ClipRect:
+        """
+        Obtém as coordenadas da janela de recorte como uma tupla.
+        
+        Returns:
+            Tupla contendo as coordenadas (esquerda, topo, direita, base) da janela de recorte
+        """
         rect = self._state_manager.clip_rect()
         return (rect.left(), rect.top(), rect.right(), rect.bottom())
 
     def _get_clipper_function(self):
+        """
+        Obtém a função de recorte de linha apropriada baseada no algoritmo selecionado.
+        
+        Returns:
+            Função de recorte de linha (Cohen-Sutherland ou Liang-Barsky)
+        """
         algo = self._state_manager.selected_line_clipper()
         return (
             clp.cohen_sutherland
@@ -95,7 +138,16 @@ class SceneController(QObject):
     def _get_bezier_segment_clip_status(
         self, segment_cps: List[Point], clip_rect_tuple: clp.ClipRect
     ) -> BezierClipStatus:
-        """Determina se um único segmento de Bézier está totalmente dentro, totalmente fora ou parcialmente dentro."""
+        """
+        Determina o status de recorte de um segmento de curva de Bézier.
+        
+        Args:
+            segment_cps: Lista de pontos de controle do segmento
+            clip_rect_tuple: Tupla com as coordenadas da janela de recorte
+            
+        Returns:
+            Status de recorte do segmento (FULLY_INSIDE, FULLY_OUTSIDE ou PARTIALLY_INSIDE)
+        """
         xmin, ymin, xmax, ymax = clip_rect_tuple
 
         all_inside = True
@@ -137,8 +189,15 @@ class SceneController(QObject):
         self, segment_cps: List[Point], clip_rect_tuple: clp.ClipRect, depth: int
     ) -> List[List[Point]]:
         """
-        Recorta recursivamente um único segmento de Bézier.
-        Retorna uma lista de listas de pontos de controle (cada lista é um sub-segmento de Bézier visível).
+        Recorta recursivamente um segmento de curva de Bézier.
+        
+        Args:
+            segment_cps: Lista de pontos de controle do segmento
+            clip_rect_tuple: Tupla com as coordenadas da janela de recorte
+            depth: Profundidade atual da recursão
+            
+        Returns:
+            Lista de listas de pontos de controle dos segmentos visíveis após o recorte
         """
         visible_segments_cps: List[List[Point]] = []
 
@@ -183,6 +242,16 @@ class SceneController(QObject):
     def _clip_data_object(
         self, original_data_object: DataObject
     ) -> Tuple[Optional[DataObject], bool]:
+        """
+        Recorta um objeto de dados de acordo com a janela de visualização.
+        
+        Args:
+            original_data_object: Objeto a ser recortado
+            
+        Returns:
+            Tupla contendo o objeto recortado (ou None se completamente fora da janela)
+            e um booleano indicando se o tipo de exibição foi alterado
+        """
         clipped_display_object: Optional[DataObject] = None
         display_type_changed = False
         clip_rect_tuple = self._clip_rect_tuple
@@ -288,6 +357,15 @@ class SceneController(QObject):
     def _get_required_qgraphicsitem_type(
         self, display_data_object: DataObject
     ) -> Optional[type]:
+        """
+        Determina o tipo de QGraphicsItem apropriado para exibir o objeto.
+        
+        Args:
+            display_data_object: Objeto de dados a ser exibido
+            
+        Returns:
+            Classe QGraphicsItem apropriada para o tipo de objeto
+        """
         if isinstance(display_data_object, Point):
             return QGraphicsEllipseItem
         if isinstance(display_data_object, Line):
@@ -305,6 +383,16 @@ class SceneController(QObject):
     def add_object(
         self, original_data_object: DataObject, mark_modified: bool = True
     ) -> Optional[QGraphicsItem]:
+        """
+        Adiciona um novo objeto à cena.
+        
+        Args:
+            original_data_object: Objeto a ser adicionado
+            mark_modified: Se True, marca a cena como modificada
+            
+        Returns:
+            Item gráfico criado ou None se a operação falhar
+        """
         if not isinstance(original_data_object, DATA_OBJECT_TYPES):
             return None
 
@@ -348,6 +436,16 @@ class SceneController(QObject):
     def remove_data_objects(
         self, data_objects_to_remove: List[DataObject], mark_modified: bool = True
     ) -> int:
+        """
+        Remove uma lista de objetos da cena.
+        
+        Args:
+            data_objects_to_remove: Lista de objetos a serem removidos
+            mark_modified: Se True, marca a cena como modificada
+            
+        Returns:
+            Número de objetos removidos com sucesso
+        """
         removed_count = 0
         for data_obj in data_objects_to_remove:
             item_id = id(data_obj)
@@ -360,6 +458,12 @@ class SceneController(QObject):
         return removed_count
 
     def clear_scene(self, mark_modified: bool = True):
+        """
+        Remove todos os objetos da cena.
+        
+        Args:
+            mark_modified: Se True, marca a cena como modificada
+        """
         items_to_remove = list(self._id_to_item_map.values())
         for item in items_to_remove:
             if item and item.scene():
@@ -372,6 +476,13 @@ class SceneController(QObject):
     def update_object_item(
         self, original_modified_data_object: DataObject, mark_modified: bool = True
     ):
+        """
+        Atualiza a representação visual de um objeto na cena.
+        
+        Args:
+            original_modified_data_object: Objeto modificado a ser atualizado
+            mark_modified: Se True, marca a cena como modificada
+        """
         if not isinstance(original_modified_data_object, DATA_OBJECT_TYPES):
             return
 
@@ -463,6 +574,13 @@ class SceneController(QObject):
     def _update_graphics_item_geometry(
         self, item: QGraphicsItem, display_data: DataObject
     ):
+        """
+        Atualiza a geometria de um item gráfico baseado nos dados de exibição.
+        
+        Args:
+            item: Item gráfico a ser atualizado
+            display_data: Dados que definem a nova geometria
+        """
         try:
             if isinstance(display_data, Point) and isinstance(
                 item, QGraphicsEllipseItem
@@ -511,6 +629,13 @@ class SceneController(QObject):
             )
 
     def _apply_style_to_item(self, item: QGraphicsItem, display_data: DataObject):
+        """
+        Aplica o estilo visual a um item gráfico.
+        
+        Args:
+            item: Item gráfico a ser estilizado
+            display_data: Dados que definem o estilo
+        """
         if not hasattr(display_data, "color"):
             return
         color = display_data.color if display_data.color.isValid() else QColor(Qt.black)
@@ -552,19 +677,52 @@ class SceneController(QObject):
     def get_item_for_original_object_id(
         self, original_object_id: int
     ) -> Optional[QGraphicsItem]:
+        """
+        Obtém o item gráfico associado a um ID de objeto original.
+        
+        Args:
+            original_object_id: ID do objeto original
+            
+        Returns:
+            Item gráfico associado ou None se não encontrado
+        """
         return self._id_to_item_map.get(original_object_id)
 
     def get_original_object_for_item(self, item: QGraphicsItem) -> Optional[DataObject]:
+        """
+        Obtém o objeto de dados original associado a um item gráfico.
+        
+        Args:
+            item: Item gráfico
+            
+        Returns:
+            Objeto de dados original ou None se não encontrado
+        """
         data = item.data(SC_ORIGINAL_OBJECT_KEY)
         return data if isinstance(data, DATA_OBJECT_TYPES) else None
 
     def get_current_representation_for_item(
         self, item: QGraphicsItem
     ) -> Optional[DataObject]:
+        """
+        Obtém a representação atual de um item gráfico.
+        
+        Args:
+            item: Item gráfico
+            
+        Returns:
+            Representação atual do objeto ou None se não encontrada
+        """
         data = item.data(SC_CURRENT_REPRESENTATION_KEY)
         return data if isinstance(data, DATA_OBJECT_TYPES) else None
 
     def get_all_original_data_objects(self) -> List[DataObject]:
+        """
+        Obtém todos os objetos de dados originais na cena.
+        
+        Returns:
+            Lista de todos os objetos de dados originais
+        """
         return [
             item.data(SC_ORIGINAL_OBJECT_KEY)
             for item in self._id_to_item_map.values()
@@ -573,6 +731,12 @@ class SceneController(QObject):
         ]
 
     def get_selected_data_objects(self) -> List[DataObject]:
+        """
+        Obtém todos os objetos de dados atualmente selecionados na cena.
+        
+        Returns:
+            Lista de objetos de dados selecionados
+        """
         return [
             item.data(SC_ORIGINAL_OBJECT_KEY)
             for item in self._scene.selectedItems()
@@ -584,7 +748,16 @@ class SceneController(QObject):
 def _compute_cohen_sutherland_code_tuple(
     point: Tuple[float, float], clip_rect: clp.ClipRect
 ) -> int:
-    """Computa o outcode Cohen-Sutherland para uma tupla de ponto."""
+    """
+    Calcula o código de região de Cohen-Sutherland para um ponto.
+    
+    Args:
+        point: Tupla (x, y) representando o ponto
+        clip_rect: Tupla com as coordenadas da janela de recorte
+        
+    Returns:
+        Código de região de Cohen-Sutherland
+    """
     x, y = point
     xmin, ymin, xmax, ymax = clip_rect
     actual_xmin, actual_xmax = min(xmin, xmax), max(xmin, xmax)

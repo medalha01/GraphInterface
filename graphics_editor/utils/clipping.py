@@ -1,3 +1,14 @@
+"""
+Módulo que implementa algoritmos de recorte (clipping) para gráficos 2D.
+
+Este módulo contém implementações de algoritmos clássicos de recorte:
+- Cohen-Sutherland: Para recorte de segmentos de linha
+- Liang-Barsky: Para recorte de segmentos de linha (alternativa)
+- Sutherland-Hodgman: Para recorte de polígonos
+
+Os algoritmos suportam recorte contra um retângulo arbitrário.
+"""
+
 # graphics_editor/utils/clipping.py
 import math
 from typing import List, Tuple, Optional, Union
@@ -14,7 +25,16 @@ EPSILON = 1e-9
 
 
 def clip_point(point: Point2D, clip_rect: ClipRect) -> Optional[Point2D]:
-    """Recorta um único ponto contra o retângulo de recorte."""
+    """
+    Recorta um único ponto contra o retângulo de recorte.
+    
+    Args:
+        point: Ponto a ser recortado (x, y)
+        clip_rect: Retângulo de recorte (xmin, ymin, xmax, ymax)
+        
+    Returns:
+        Optional[Point2D]: Ponto recortado se estiver dentro do retângulo, None caso contrário
+    """
     x, y = point
     xmin, ymin, xmax, ymax = clip_rect
 
@@ -34,7 +54,17 @@ TOP = 0b1000
 
 
 def _compute_cohen_sutherland_code(x: float, y: float, clip_rect: ClipRect) -> int:
-    """Computa o outcode Cohen-Sutherland para um ponto."""
+    """
+    Computa o outcode Cohen-Sutherland para um ponto.
+    
+    Args:
+        x: Coordenada x do ponto
+        y: Coordenada y do ponto
+        clip_rect: Retângulo de recorte (xmin, ymin, xmax, ymax)
+        
+    Returns:
+        int: Código de região do ponto (INSIDE, LEFT, RIGHT, BOTTOM, TOP)
+    """
     xmin, ymin, xmax, ymax = clip_rect
 
     actual_xmin, actual_xmax = min(xmin, xmax), max(xmin, xmax)
@@ -55,7 +85,18 @@ def _compute_cohen_sutherland_code(x: float, y: float, clip_rect: ClipRect) -> i
 def cohen_sutherland(
     p1: Point2D, p2: Point2D, clip_rect: ClipRect
 ) -> Optional[Tuple[Point2D, Point2D]]:
-    """Recorta um segmento de linha usando o algoritmo Cohen-Sutherland."""
+    """
+    Recorta um segmento de linha usando o algoritmo Cohen-Sutherland.
+    
+    Args:
+        p1: Ponto inicial do segmento (x1, y1)
+        p2: Ponto final do segmento (x2, y2)
+        clip_rect: Retângulo de recorte (xmin, ymin, xmax, ymax)
+        
+    Returns:
+        Optional[Tuple[Point2D, Point2D]]: Segmento recortado se houver interseção,
+            None se o segmento estiver completamente fora
+    """
     x1, y1 = p1
     x2, y2 = p2
     xmin, ymin, xmax, ymax = clip_rect
@@ -122,7 +163,18 @@ def cohen_sutherland(
 def liang_barsky(
     p1: Point2D, p2: Point2D, clip_rect: ClipRect
 ) -> Optional[Tuple[Point2D, Point2D]]:
-    """Recorta um segmento de linha usando o algoritmo Liang-Barsky."""
+    """
+    Recorta um segmento de linha usando o algoritmo Liang-Barsky.
+    
+    Args:
+        p1: Ponto inicial do segmento (x1, y1)
+        p2: Ponto final do segmento (x2, y2)
+        clip_rect: Retângulo de recorte (xmin, ymin, xmax, ymax)
+        
+    Returns:
+        Optional[Tuple[Point2D, Point2D]]: Segmento recortado se houver interseção,
+            None se o segmento estiver completamente fora
+    """
     x1, y1 = p1
     x2, y2 = p2
     xmin, ymin, xmax, ymax = clip_rect
@@ -154,6 +206,18 @@ def liang_barsky(
 def _intersect_polygon_edge(
     p1: Point2D, p2: Point2D, edge_index: int, clip_rect: ClipRect
 ) -> Point2D:
+    """
+    Calcula a interseção de um segmento com uma aresta do retângulo de recorte.
+    
+    Args:
+        p1: Ponto inicial do segmento
+        p2: Ponto final do segmento
+        edge_index: Índice da aresta (0=esquerda, 1=direita, 2=inferior, 3=superior)
+        clip_rect: Retângulo de recorte
+        
+    Returns:
+        Point2D: Ponto de interseção
+    """
     xmin, ymin, xmax, ymax = clip_rect
     actual_xmin, actual_xmax = min(xmin, xmax), max(xmin, xmax)
     actual_ymin, actual_ymax = min(ymin, ymax), max(ymin, ymax)
@@ -182,6 +246,17 @@ def _intersect_polygon_edge(
 
 
 def _is_inside_edge(p: Point2D, edge_index: int, clip_rect: ClipRect) -> bool:
+    """
+    Verifica se um ponto está dentro de uma aresta do retângulo de recorte.
+    
+    Args:
+        p: Ponto a verificar
+        edge_index: Índice da aresta (0=esquerda, 1=direita, 2=inferior, 3=superior)
+        clip_rect: Retângulo de recorte
+        
+    Returns:
+        bool: True se o ponto estiver dentro da aresta, False caso contrário
+    """
     xmin, ymin, xmax, ymax = clip_rect
     actual_xmin, actual_xmax = min(xmin, xmax), max(xmin, xmax)
     actual_ymin, actual_ymax = min(ymin, ymax), max(ymin, ymax)
@@ -201,6 +276,16 @@ def _is_inside_edge(p: Point2D, edge_index: int, clip_rect: ClipRect) -> bool:
 def sutherland_hodgman(
     polygon_vertices: List[Point2D], clip_rect: ClipRect
 ) -> List[Point2D]:
+    """
+    Recorta um polígono usando o algoritmo Sutherland-Hodgman.
+    
+    Args:
+        polygon_vertices: Lista de vértices do polígono
+        clip_rect: Retângulo de recorte (xmin, ymin, xmax, ymax)
+        
+    Returns:
+        List[Point2D]: Lista de vértices do polígono recortado
+    """
     if not polygon_vertices:
         return []
     output_list = list(polygon_vertices)

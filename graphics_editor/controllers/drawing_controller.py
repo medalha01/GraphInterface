@@ -1,3 +1,11 @@
+"""
+Módulo que implementa o controlador de desenho do editor gráfico.
+
+Este módulo contém:
+- DrawingController: Controlador responsável pelo processo de desenho de objetos
+  (ponto, linha, polígono, curva de Bézier)
+"""
+
 # graphics_editor/controllers/drawing_controller.py
 from PyQt5.QtCore import Qt
 from PyQt5.QtCore import QObject, pyqtSignal, QPointF, Qt, QLineF
@@ -21,6 +29,16 @@ DATA_OBJECT_TYPES = (Point, Line, Polygon, BezierCurve)
 
 
 class DrawingController(QObject):
+    """
+    Controlador responsável pelo processo de desenho de objetos gráficos.
+    
+    Este controlador gerencia:
+    - O processo de desenho de diferentes tipos de objetos (ponto, linha, polígono, curva de Bézier)
+    - A visualização prévia durante o desenho
+    - A validação e finalização do desenho
+    - A comunicação com o usuário através de mensagens de status
+    """
+
     object_ready_to_add = pyqtSignal(object)
     status_message_requested = pyqtSignal(str, int)
     polygon_properties_query_requested = (
@@ -33,6 +51,14 @@ class DrawingController(QObject):
         state_manager: EditorStateManager,
         parent: Optional[QObject] = None,
     ):
+        """
+        Inicializa o controlador de desenho.
+        
+        Args:
+            scene: Cena gráfica onde os objetos serão desenhados
+            state_manager: Gerenciador de estado do editor
+            parent: Objeto pai (opcional)
+        """
         super().__init__(parent)
         self._scene = scene
         self._state_manager = state_manager
@@ -56,13 +82,29 @@ class DrawingController(QObject):
         self._state_manager.drawing_mode_changed.connect(self._on_mode_changed)
 
     def _on_mode_changed(self, mode: DrawingMode):
+        """
+        Callback quando o modo de desenho muda.
+        
+        Args:
+            mode: Novo modo de desenho
+        """
         # Always cancel current drawing if mode changes, to ensure clean state
         self.cancel_current_drawing()
 
     def set_pending_polygon_properties(
         self, is_open: bool, is_filled: bool, cancelled: bool = False
     ):
-        """Called by GraphicsEditor after user provides polygon type/fill info."""
+        """
+        Define as propriedades do polígono pendente.
+        
+        Chamado pelo GraphicsEditor após o usuário fornecer informações
+        sobre o tipo e preenchimento do polígono.
+        
+        Args:
+            is_open: Se o polígono é aberto (polilinha)
+            is_filled: Se o polígono é preenchido (apenas para fechado)
+            cancelled: Se o usuário cancelou a operação
+        """
         if cancelled or self._pending_first_polygon_point is None:
             self.status_message_requested.emit("Desenho de polígono cancelado.", 2000)
             # Use _finish_current_drawing to reset pending point and other states
@@ -89,6 +131,18 @@ class DrawingController(QObject):
         )
 
     def handle_scene_left_click(self, scene_pos: QPointF):
+        """
+        Manipula o clique esquerdo na cena.
+        
+        Processa o clique de acordo com o modo de desenho atual:
+        - Ponto: Cria um ponto
+        - Linha: Inicia ou finaliza uma linha
+        - Polígono: Adiciona vértices
+        - Bézier: Adiciona pontos de controle
+        
+        Args:
+            scene_pos: Posição do clique na cena
+        """
         mode = self._state_manager.drawing_mode()
         color = self._state_manager.draw_color()
         current_point_data = Point(scene_pos.x(), scene_pos.y(), color=color)
@@ -165,6 +219,14 @@ class DrawingController(QObject):
             self._update_bezier_status_message()
 
     def _update_bezier_status_message(self):
+        """
+        Atualiza a mensagem de status para o modo Bézier.
+        
+        Mostra informações sobre:
+        - Número de pontos adicionados
+        - Pontos necessários para completar o segmento atual
+        - Possibilidade de finalizar a curva
+        """
         num_pts = len(self._current_bezier_points)
         status = f"Bézier: Ponto {num_pts} adicionado."
         min_finish_pts = 4
@@ -199,11 +261,27 @@ class DrawingController(QObject):
         self.status_message_requested.emit(status, 0)
 
     def handle_scene_right_click(self, scene_pos: QPointF):
+        """
+        Manipula o clique direito na cena.
+        
+        Finaliza o desenho atual para polígonos e curvas de Bézier.
+        
+        Args:
+            scene_pos: Posição do clique na cena
+        """
         mode = self._state_manager.drawing_mode()
         if mode == DrawingMode.POLYGON or mode == DrawingMode.BEZIER:
             self._finish_current_drawing(commit=True)
 
     def handle_scene_mouse_move(self, scene_pos: QPointF):
+        """
+        Manipula o movimento do mouse na cena.
+        
+        Atualiza a visualização prévia do objeto sendo desenhado.
+        
+        Args:
+            scene_pos: Posição atual do mouse na cena
+        """
         mode = self._state_manager.drawing_mode()
         if mode == DrawingMode.LINE and self._current_line_start:
             self._update_line_preview(scene_pos)
@@ -213,9 +291,20 @@ class DrawingController(QObject):
             self._update_bezier_preview(scene_pos)
 
     def cancel_current_drawing(self):
+        """
+        Cancela o desenho atual.
+        
+        Remove a visualização prévia e limpa o estado do desenho.
+        """
         self._finish_current_drawing(commit=False)
 
     def _update_line_preview(self, current_pos: QPointF):
+        """
+        Atualiza a visualização prévia da linha.
+        
+        Args:
+            current_pos: Posição atual do mouse
+        """
         if not self._current_line_start:
             return
         start_qpos = self._current_line_start.to_qpointf()
@@ -229,6 +318,12 @@ class DrawingController(QObject):
             self._temp_line_item.setLine(line)
 
     def _update_polygon_preview(self, current_pos: QPointF):
+        """
+        Atualiza a visualização prévia do polígono.
+        
+        Args:
+            current_pos: Posição atual do mouse
+        """
         if not self._current_polygon_points:
             return
         path = QPainterPath()
@@ -245,6 +340,12 @@ class DrawingController(QObject):
             self._temp_polygon_path.setPath(path)
 
     def _update_bezier_preview(self, current_pos: QPointF):
+        """
+        Atualiza a visualização prévia da curva de Bézier.
+        
+        Args:
+            current_pos: Posição atual do mouse
+        """
         if not self._current_bezier_points:
             return
         path = QPainterPath()
@@ -261,6 +362,12 @@ class DrawingController(QObject):
             self._temp_bezier_path.setPath(path)
 
     def _finish_current_drawing(self, commit: bool = True) -> None:
+        """
+        Finaliza o desenho atual.
+        
+        Args:
+            commit: Se True, cria e emite o objeto final
+        """
         drawing_finished_or_cancelled = False  # Will be set true if state is reset
         mode = self._state_manager.drawing_mode()
         color = self._state_manager.draw_color()
@@ -372,6 +479,11 @@ class DrawingController(QObject):
             self._pending_first_polygon_point = None
 
     def _remove_temp_items(self) -> None:
+        """
+        Remove os itens temporários da cena.
+        
+        Limpa a visualização prévia do objeto sendo desenhado.
+        """
         items_to_remove = [
             self._temp_line_item,
             self._temp_polygon_path,

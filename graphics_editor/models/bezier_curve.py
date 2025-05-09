@@ -9,17 +9,40 @@ from typing import List, Tuple, Optional, Union
 
 from .point import Point
 
-"""Essa Classe foi refatorada pelo chatgpt"""
+"""
+Módulo que define a classe BezierCurve para representação de curvas de Bézier cúbicas compostas.
+Este módulo contém a implementação de curvas de Bézier com múltiplos segmentos e pontos de controle.
+"""
 
 
 class BezierCurve:
-    """Representa uma curva de Bézier cúbica composta (sequência de segmentos)."""
+    """
+    Representa uma curva de Bézier cúbica composta (sequência de segmentos).
+    
+    Esta classe é responsável por:
+    - Gerenciar múltiplos segmentos de curva de Bézier
+    - Calcular pontos ao longo da curva
+    - Subdividir segmentos da curva
+    - Criar a representação gráfica da curva
+    - Fornecer métodos para manipulação de coordenadas
+    """
 
-    GRAPHICS_WIDTH = 2
-    SUBDIVISION_THRESHOLD = 1.0
-    MAX_SUBDIVISION_DEPTH = 5
+    GRAPHICS_WIDTH = 2  # Espessura visual da curva
+    SUBDIVISION_THRESHOLD = 1.0  # Limiar para subdivisão da curva
+    MAX_SUBDIVISION_DEPTH = 5  # Profundidade máxima de subdivisão
 
     def __init__(self, points: List[Point], color: Optional[QColor] = None):
+        """
+        Inicializa uma curva de Bézier com pontos de controle.
+        
+        Args:
+            points: Lista de pontos de controle (deve ter 4, 7, 10, ... pontos)
+            color: Cor da curva (opcional, padrão é preto)
+            
+        Raises:
+            TypeError: Se os pontos não forem instâncias de Point
+            ValueError: Se o número de pontos for inválido
+        """
         if not isinstance(points, list) or not all(
             isinstance(p, Point) for p in points
         ):
@@ -45,13 +68,27 @@ class BezierCurve:
         self._num_segments = (n_points - 1) // 3
 
     def get_segment_control_points(self, segment_index: int) -> Optional[List[Point]]:
-        """Retorna os 4 pontos de controle para um segmento específico."""
+        """
+        Retorna os 4 pontos de controle para um segmento específico.
+        
+        Args:
+            segment_index: Índice do segmento desejado
+            
+        Returns:
+            Optional[List[Point]]: Lista com 4 pontos de controle ou None se o índice for inválido
+        """
         if not (0 <= segment_index < self._num_segments):
             return None
         start_idx = 3 * segment_index
         return self.points[start_idx : start_idx + 4]
 
     def create_graphics_item(self) -> QGraphicsPathItem:
+        """
+        Cria a representação gráfica da curva como um item da cena.
+        
+        Returns:
+            QGraphicsPathItem: Item gráfico representando a curva
+        """
         path = QPainterPath()
         if not self.points or self._num_segments == 0:
             return QGraphicsPathItem(path)
@@ -75,9 +112,21 @@ class BezierCurve:
         return curve_item
 
     def get_coords(self) -> List[Tuple[float, float]]:
+        """
+        Retorna as coordenadas de todos os pontos de controle.
+        
+        Returns:
+            List[Tuple[float, float]]: Lista contendo as coordenadas dos pontos
+        """
         return [p.get_coords() for p in self.points]
 
     def get_center(self) -> Tuple[float, float]:
+        """
+        Retorna o centro da curva (média dos pontos de controle).
+        
+        Returns:
+            Tuple[float, float]: Tupla contendo as coordenadas do centro
+        """
         if not self.points:
             return (0.0, 0.0)
         sum_x = sum(p.x for p in self.points)
@@ -88,6 +137,12 @@ class BezierCurve:
         return (sum_x / count, sum_y / count)
 
     def get_num_segments(self) -> int:
+        """
+        Retorna o número de segmentos na curva.
+        
+        Returns:
+            int: Número de segmentos
+        """
         return self._num_segments
 
     @staticmethod
@@ -98,6 +153,19 @@ class BezierCurve:
         p2_coords: Tuple[float, float],
         p3_coords: Tuple[float, float],
     ) -> QPointF:
+        """
+        Calcula um ponto na curva de Bézier cúbica para um parâmetro t.
+        
+        Args:
+            t: Parâmetro da curva (0 a 1)
+            p0_coords: Coordenadas do primeiro ponto de controle
+            p1_coords: Coordenadas do segundo ponto de controle
+            p2_coords: Coordenadas do terceiro ponto de controle
+            p3_coords: Coordenadas do quarto ponto de controle
+            
+        Returns:
+            QPointF: Ponto calculado na curva
+        """
         t = max(0.0, min(1.0, t))
         one_minus_t = 1.0 - t
         x = (
@@ -115,6 +183,15 @@ class BezierCurve:
         return QPointF(x, y)
 
     def sample_curve(self, num_points_per_segment: int = 20) -> List[QPointF]:
+        """
+        Amostra pontos ao longo da curva.
+        
+        Args:
+            num_points_per_segment: Número de pontos a amostrar por segmento
+            
+        Returns:
+            List[QPointF]: Lista de pontos amostrados ao longo da curva
+        """
         sampled_points = []
         if num_points_per_segment < 2:
             num_points_per_segment = 2
@@ -144,9 +221,17 @@ class BezierCurve:
         cps: List[Point], t: float = 0.5
     ) -> Tuple[List[Point], List[Point]]:
         """
-        Subdivide um único segmento de Bézier cúbico (4 pontos de controle) no parâmetro t.
-        Usa o algoritmo De Casteljau.
-        Retorna duas listas de 4 pontos de controle para os novos sub-segmentos.
+        Subdivide um segmento de Bézier cúbico em dois sub-segmentos.
+        
+        Args:
+            cps: Lista de 4 pontos de controle do segmento
+            t: Parâmetro de subdivisão (0 a 1)
+            
+        Returns:
+            Tuple[List[Point], List[Point]]: Dois conjuntos de pontos de controle para os sub-segmentos
+            
+        Raises:
+            ValueError: Se não houver exatamente 4 pontos de controle
         """
         if len(cps) != 4:
             raise ValueError(
@@ -174,7 +259,15 @@ class BezierCurve:
 
     @staticmethod
     def segment_control_polygon_length(cps: List[Point]) -> float:
-        """Calcula o comprimento do polígono de controle para um segmento."""
+        """
+        Calcula o comprimento do polígono de controle de um segmento.
+        
+        Args:
+            cps: Lista de 4 pontos de controle
+            
+        Returns:
+            float: Comprimento do polígono de controle
+        """
         if len(cps) != 4:
             return float("inf")
         l = 0.0
@@ -188,7 +281,15 @@ class BezierCurve:
     def segment_bounding_box(
         cps: List[Point],
     ) -> Optional[Tuple[float, float, float, float]]:
-        """Calcula a caixa delimitadora alinhada aos eixos dos 4 pontos de controle."""
+        """
+        Calcula a caixa delimitadora de um segmento.
+        
+        Args:
+            cps: Lista de 4 pontos de controle
+            
+        Returns:
+            Optional[Tuple[float, float, float, float]]: Tupla (x_min, y_min, x_max, y_max) ou None se inválido
+        """
         if not cps or len(cps) != 4:
             return None
         xs = [p.x for p in cps]
@@ -196,5 +297,11 @@ class BezierCurve:
         return min(xs), min(ys), max(xs), max(ys)
 
     def __repr__(self) -> str:
+        """
+        Retorna uma representação textual da curva.
+        
+        Returns:
+            str: String representando a curva com seus segmentos e cor
+        """
         points_str = ", ".join(repr(p) for p in self.points)
         return f"BezierCurve(segments={self._num_segments}[{points_str}], color={self.color.name()})"
