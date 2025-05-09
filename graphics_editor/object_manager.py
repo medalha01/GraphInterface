@@ -15,9 +15,10 @@ from .models.point import Point
 from .models.line import Line
 from .models.polygon import Polygon
 from .models.bezier_curve import BezierCurve
+from .models.bspline_curve import BSplineCurve
 
-DataObject = Union[Point, Line, Polygon, BezierCurve]
-DATA_OBJECT_TYPES = (Point, Line, Polygon, BezierCurve)
+DataObject = Union[Point, Line, Polygon, BezierCurve, BSplineCurve]
+DATA_OBJECT_TYPES = (Point, Line, Polygon, BezierCurve, BSplineCurve)
 
 
 class ObjectManager:
@@ -25,28 +26,35 @@ class ObjectManager:
     Gerencia a conversão entre dados de arquivo OBJ/MTL e os objetos de dados internos.
     
     Esta classe é responsável por:
-    - Converter dados OBJ/MTL em objetos internos (Point, Line, Polygon, BezierCurve)
+    - Converter dados OBJ/MTL em objetos internos (Point, Line, Polygon, BezierCurve, BSplineCurve)
     - Gerar dados OBJ/MTL a partir de objetos internos
-    - Gerenciar a aproximação de curvas de Bézier como polilinhas
+    - Gerenciar a aproximação de curvas de Bézier e B-spline como polilinhas
     - Tratar erros e gerar avisos durante a conversão
     
-    Nota: Curvas de Bézier são aproximadas como polilinhas ao salvar e não são
+    Nota: Curvas de Bézier e B-spline são aproximadas como polilinhas ao salvar e não são
           reconstruídas ao carregar.
     """
 
     DEFAULT_BEZIER_SAVE_SAMPLES = 20
+    DEFAULT_BSPLINE_SAVE_SAMPLES = 20
 
-    def __init__(self, bezier_samples: Optional[int] = None):
+    def __init__(self, bezier_samples: Optional[int] = None, bspline_samples: Optional[int] = None):
         """
         Inicializa o gerenciador de objetos.
         
         Args:
             bezier_samples: Número de amostras por segmento para aproximação de Bézier ao salvar
+            bspline_samples: Número de amostras para aproximação de B-spline ao salvar
         """
         self.bezier_save_samples = (
             bezier_samples
             if bezier_samples is not None
             else self.DEFAULT_BEZIER_SAVE_SAMPLES
+        )
+        self.bspline_save_samples = (
+            bspline_samples
+            if bspline_samples is not None
+            else self.DEFAULT_BSPLINE_SAVE_SAMPLES
         )
 
     def parse_obj_data(
@@ -256,7 +264,7 @@ class ObjectManager:
         Gera conteúdo dos arquivos OBJ e MTL a partir dos objetos internos.
         
         Args:
-            data_objects: Lista de objetos da cena (Point, Line, Polygon, BezierCurve)
+            data_objects: Lista de objetos da cena (Point, Line, Polygon, BezierCurve, BSplineCurve)
             mtl_filename: Nome do arquivo MTL a ser referenciado no OBJ
             
         Returns:
@@ -272,7 +280,7 @@ class ObjectManager:
 
         if not savable_objects:
             warnings.append(
-                "Nenhum objeto suportado (Ponto, Linha, Polígono, Bézier) na cena para salvar."
+                "Nenhum objeto suportado (Ponto, Linha, Polígono, Bézier, B-spline) na cena para salvar."
             )
             return None, None, warnings
 

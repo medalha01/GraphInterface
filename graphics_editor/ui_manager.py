@@ -217,6 +217,7 @@ class UIManager:
             (DrawingMode.LINE, "Linha", "Desenhar linhas (L)", "line.png", "L"),
             (DrawingMode.POLYGON, "Polígono", "Desenhar polígonos/polilinhas (G)", "polygon.png", "G"),
             (DrawingMode.BEZIER, "Bézier", "Desenhar curvas de Bézier (B)", "bezier.png", "B"),
+            (DrawingMode.BSPLINE, "B-spline", "Desenhar curvas B-spline (N)", "bspline.png", "N"),
         ]
 
         initial_mode = self.state_manager.drawing_mode()
@@ -382,6 +383,7 @@ class UIManager:
                 DrawingMode.SELECT: "Seleção", DrawingMode.PAN: "Mover Vista",
                 DrawingMode.POINT: "Ponto", DrawingMode.LINE: "Linha",
                 DrawingMode.POLYGON: "Polígono", DrawingMode.BEZIER: "Bézier",
+                DrawingMode.BSPLINE: "B-spline",
             }
             mode_text = f"Modo: {mode_map.get(mode, 'Desconhecido')}"
             self.status_mode_label.setText(mode_text)

@@ -52,9 +52,9 @@ class CoordinateInputDialog(QDialog):
         """
         super().__init__(parent)
         self.mode: str = mode.lower()
-        if self.mode not in ["point", "line", "polygon", "bezier"]: # Add bezier
+        if self.mode not in ["point", "line", "polygon", "bezier", "bspline"]: # Add bspline
             raise ValueError(
-                f"Modo inválido: '{self.mode}'. Use 'point', 'line', 'polygon', 'bezier'."
+                f"Modo inválido: '{self.mode}'. Use 'point', 'line', 'polygon', 'bezier', 'bspline'."
             )
 
         self.setWindowTitle(f"Inserir Coordenadas - {self.mode.capitalize()}")
@@ -151,14 +151,17 @@ class CoordinateInputDialog(QDialog):
             p2_group.setLayout(p2_layout)
             self.input_layout.addWidget(p2_group)
 
-        elif self.mode == "polygon" or self.mode == "bezier":
-            # Shared UI for Polygon and Bezier point lists
+        elif self.mode == "polygon" or self.mode == "bezier" or self.mode == "bspline":
+            # Shared UI for Polygon, Bezier and B-spline point lists
             if self.mode == "polygon":
                 label_text = "Vértices do Polígono (mín. 3 fechado, 2 aberto):"
                 initial_points = 3
-            else: # Bezier
+            elif self.mode == "bezier":
                 label_text = "Pontos de Controle Bézier (mín. 4, depois +3 por segmento):"
                 initial_points = 4
+            else:  # B-spline
+                label_text = "Pontos de Controle B-spline (mín. 2):"
+                initial_points = 2
 
             self.input_layout.addWidget(QLabel(label_text))
 
@@ -367,7 +370,7 @@ class CoordinateInputDialog(QDialog):
             if not all(raw_texts[0]) or not all(raw_texts[1]):
                 raise ValueError("Todas as 4 coordenadas são obrigatórias para a linha.")
 
-        elif self.mode == "polygon" or self.mode == "bezier":
+        elif self.mode == "polygon" or self.mode == "bezier" or self.mode == "bspline":
             # Collect non-empty pairs from the list
             for i, (x_input, y_input) in enumerate(self.point_widgets):
                 x_text, y_text = x_input.text().strip(), y_input.text().strip()
@@ -391,7 +394,7 @@ class CoordinateInputDialog(QDialog):
                     raise ValueError(
                         f"Polígono {tipo} requer pelo menos {min_points} vértices preenchidos ({num_points_collected} encontrados)."
                     )
-            else: # Bezier validation
+            elif self.mode == "bezier":
                 min_points = 4
                 if num_points_collected < min_points:
                     raise ValueError(f"Curva de Bézier requer pelo menos {min_points} pontos ({num_points_collected} encontrados).")
@@ -399,6 +402,15 @@ class CoordinateInputDialog(QDialog):
                     raise ValueError(
                        f"Número inválido de pontos ({num_points_collected}) para curva Bézier composta. "
                        "Deve ser 4 ou 7 ou 10 etc. (4 + 3*N)."
+                    )
+            else:  # B-spline validation
+                min_points = 2
+                if num_points_collected < min_points:
+                    raise ValueError(f"B-spline requer pelo menos {min_points} pontos ({num_points_collected} encontrados).")
+                if num_points_collected > min_points and (num_points_collected - min_points) % 2 != 0:
+                    raise ValueError(
+                       f"Número inválido de pontos ({num_points_collected}) para B-spline composta. "
+                       "Deve ser 2 ou 4 ou 6 etc. (2 + 2*N)."
                     )
 
         # Convert texts to float using locale
