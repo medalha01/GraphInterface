@@ -14,14 +14,14 @@ from PyQt5.QtWidgets import QMessageBox, QDialog, QWidget
 from typing import Union, Optional, Dict, Any, List, Tuple
 
 # Importações relativas
-from ..models import Point, Line, Polygon, BezierCurve  # Use __init__
+from ..models import Point, Line, Polygon, BezierCurve, BSplineCurve  # Use __init__
 from ..dialogs.transformation_dialog import TransformationDialog
 from ..utils import transformations as tf
 
 # Alias for types that can be transformed
-TransformableObject = Union[Point, Line, Polygon, BezierCurve]
+TransformableObject = Union[Point, Line, Polygon, BezierCurve, BSplineCurve]
 # Tuple of actual types for isinstance checks
-TRANSFORMABLE_TYPES = (Point, Line, Polygon, BezierCurve)
+TRANSFORMABLE_TYPES = (Point, Line, Polygon, BezierCurve, BSplineCurve)
 
 
 class TransformationController(QObject):

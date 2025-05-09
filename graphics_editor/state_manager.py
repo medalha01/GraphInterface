@@ -19,13 +19,15 @@ class DrawingMode(Enum):
         LINE: Modo para desenhar linhas
         POLYGON: Modo para desenhar polígonos
         BEZIER: Modo para desenhar curvas de Bézier
+        BSPLINE: Modo para desenhar curvas B-spline
         SELECT: Modo para selecionar e manipular objetos
         PAN: Modo para mover a visualização
     """
     POINT = auto()
     LINE = auto()
     POLYGON = auto()
-    BEZIER = auto()  # Add Bezier mode
+    BEZIER = auto()
+    BSPLINE = auto()  # Add B-spline mode
     SELECT = auto()
     PAN = auto()
 

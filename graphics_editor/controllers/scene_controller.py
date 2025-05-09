@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QObject, pyqtSignal, QRectF, QLineF
 from PyQt5.QtGui import QColor, QPen, QBrush, QPolygonF, QPainterPath
 
-from ..models import Point, Line, Polygon, BezierCurve
+from ..models import Point, Line, Polygon, BezierCurve, BSplineCurve
 from ..models import __all__ as model_names_list
 
 _models_module = __import__("graphics_editor.models", fromlist=model_names_list)
@@ -23,11 +23,12 @@ DATA_OBJECT_TYPES = tuple(getattr(_models_module, name) for name in model_names_
 from ..state_manager import EditorStateManager, LineClippingAlgorithm
 from ..utils import clipping as clp
 
-DataObject = Union[Point, Line, Polygon, BezierCurve]
+DataObject = Union[Point, Line, Polygon, BezierCurve, BSplineCurve]
 
 SC_ORIGINAL_OBJECT_KEY = Qt.UserRole + 1
 SC_CURRENT_REPRESENTATION_KEY = Qt.UserRole + 3
 SC_IS_CLIPPED_BEZIER_AS_POLYGON_KEY = Qt.UserRole + 2
+SC_IS_CLIPPED_BSPLINE_AS_POLYGON_KEY = Qt.UserRole + 4
 
 
 class BezierClipStatus(Enum):
@@ -344,6 +345,32 @@ class SceneController(QObject):
                     if original_data_object.points:
                         display_type_changed = True
 
+            elif isinstance(original_data_object, BSplineCurve):
+                # Sample points along the B-spline curve
+                curve_points = original_data_object.get_curve_points()
+                if curve_points:
+                    # Use Sutherland-Hodgman to clip the sampled points
+                    clipped_points = clp.sutherland_hodgman(curve_points, clip_rect_tuple)
+                    if len(clipped_points) >= 2:  # Need at least 2 points for a line
+                        # Create a polygon from the clipped points
+                        clipped_points_models = [
+                            Point(x, y, original_data_object.color)
+                            for x, y in clipped_points
+                        ]
+                        clipped_display_object = Polygon(
+                            clipped_points_models,
+                            is_open=True,  # Always open for B-spline
+                            color=original_data_object.color,
+                            is_filled=False
+                        )
+                        display_type_changed = True  # B-spline is displayed as a polygon
+                    else:
+                        clipped_display_object = None
+                        display_type_changed = True
+                else:
+                    clipped_display_object = None
+                    display_type_changed = True
+
             return clipped_display_object, display_type_changed
 
         except Exception as e:
@@ -377,6 +404,8 @@ class SceneController(QObject):
                 else QGraphicsPolygonItem
             )
         if isinstance(display_data_object, BezierCurve):
+            return QGraphicsPathItem
+        if isinstance(display_data_object, BSplineCurve):
             return QGraphicsPathItem
         return None
 

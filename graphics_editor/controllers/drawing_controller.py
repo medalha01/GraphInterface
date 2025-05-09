@@ -7,8 +7,7 @@ Este módulo contém:
 """
 
 # graphics_editor/controllers/drawing_controller.py
-from PyQt5.QtCore import Qt
-from PyQt5.QtCore import QObject, pyqtSignal, QPointF, Qt, QLineF
+from PyQt5.QtCore import QObject, pyqtSignal, QPointF, QLineF, Qt
 from PyQt5.QtGui import QPainterPath, QPen, QColor, QPolygonF
 from PyQt5.QtWidgets import (
     QGraphicsScene,
@@ -23,9 +22,10 @@ from ..models.point import Point
 from ..models.line import Line
 from ..models.polygon import Polygon
 from ..models.bezier_curve import BezierCurve
+from ..models.bspline_curve import BSplineCurve
 
-DataObject = Union[Point, Line, Polygon, BezierCurve]
-DATA_OBJECT_TYPES = (Point, Line, Polygon, BezierCurve)
+DataObject = Union[Point, Line, Polygon, BezierCurve, BSplineCurve]
+DATA_OBJECT_TYPES = (Point, Line, Polygon, BezierCurve, BSplineCurve)
 
 
 class DrawingController(QObject):
@@ -63,21 +63,23 @@ class DrawingController(QObject):
         self._scene = scene
         self._state_manager = state_manager
 
+        self._temp_item_color = QColor(0, 0, 0)  # Black color
         self._current_line_start: Optional[Point] = None
         self._current_polygon_points: List[Point] = []
         self._current_polygon_is_open: bool = False
         self._current_polygon_is_filled: bool = False
         self._current_bezier_points: List[Point] = []
+        self._current_bspline_points: List[Point] = []
 
         self._pending_first_polygon_point: Optional[Point] = (
             None  # For polygon properties query
         )
 
+        self._temp_item_pen = QPen(self._temp_item_color, 2)
         self._temp_line_item: Optional[QGraphicsLineItem] = None
         self._temp_polygon_path: Optional[QGraphicsPathItem] = None
         self._temp_bezier_path: Optional[QGraphicsPathItem] = None
-        self._temp_item_pen = QPen(Qt.gray, 1, Qt.DashLine)
-        self._temp_bezier_control_pen = QPen(Qt.darkCyan, 1, Qt.DotLine)
+        self._temp_bspline_path: Optional[QGraphicsPathItem] = None
 
         self._state_manager.drawing_mode_changed.connect(self._on_mode_changed)
 
@@ -139,6 +141,7 @@ class DrawingController(QObject):
         - Linha: Inicia ou finaliza uma linha
         - Polígono: Adiciona vértices
         - Bézier: Adiciona pontos de controle
+        - B-spline: Adiciona pontos de controle
         
         Args:
             scene_pos: Posição do clique na cena
@@ -218,6 +221,11 @@ class DrawingController(QObject):
             self._update_bezier_preview(scene_pos)
             self._update_bezier_status_message()
 
+        elif mode == DrawingMode.BSPLINE:
+            self._current_bspline_points.append(current_point_data)
+            self._update_bspline_preview(scene_pos)
+            self._update_bspline_status_message()
+
     def _update_bezier_status_message(self):
         """
         Atualiza a mensagem de status para o modo Bézier.
@@ -270,7 +278,7 @@ class DrawingController(QObject):
             scene_pos: Posição do clique na cena
         """
         mode = self._state_manager.drawing_mode()
-        if mode == DrawingMode.POLYGON or mode == DrawingMode.BEZIER:
+        if mode == DrawingMode.POLYGON or mode == DrawingMode.BEZIER or mode == DrawingMode.BSPLINE:
             self._finish_current_drawing(commit=True)
 
     def handle_scene_mouse_move(self, scene_pos: QPointF):
@@ -289,6 +297,8 @@ class DrawingController(QObject):
             self._update_polygon_preview(scene_pos)
         elif mode == DrawingMode.BEZIER and self._current_bezier_points:
             self._update_bezier_preview(scene_pos)
+        elif mode == DrawingMode.BSPLINE and self._current_bspline_points:
+            self._update_bspline_preview(scene_pos)
 
     def cancel_current_drawing(self):
         """
@@ -355,11 +365,79 @@ class DrawingController(QObject):
         path.lineTo(current_pos)
         if self._temp_bezier_path is None:
             self._temp_bezier_path = QGraphicsPathItem(path)
-            self._temp_bezier_path.setPen(self._temp_bezier_control_pen)
+            self._temp_bezier_path.setPen(self._temp_item_pen)
             self._temp_bezier_path.setZValue(999)
             self._scene.addItem(self._temp_bezier_path)
         else:
             self._temp_bezier_path.setPath(path)
+
+    def _update_bspline_preview(self, current_pos: QPointF):
+        """
+        Atualiza a visualização prévia da curva B-spline.
+        
+        Args:
+            current_pos: Posição atual do mouse
+        """
+        if not self._current_bspline_points:
+            return
+            
+        # Se tiver apenas um ponto, desenha uma linha até a posição atual
+        if len(self._current_bspline_points) == 1:
+            path = QPainterPath()
+            path.moveTo(self._current_bspline_points[0].to_qpointf())
+            path.lineTo(current_pos)
+            
+            if self._temp_bspline_path is None:
+                self._temp_bspline_path = QGraphicsPathItem(path)
+                self._temp_bspline_path.setPen(self._temp_item_pen)
+                self._temp_bspline_path.setZValue(1000)
+                self._scene.addItem(self._temp_bspline_path)
+            else:
+                self._temp_bspline_path.setPath(path)
+            return
+            
+        # Se tiver 2 ou mais pontos, cria a curva B-spline
+        try:
+            temp_curve = BSplineCurve(self._current_bspline_points, color=self._temp_item_pen.color())
+            temp_item = temp_curve.create_graphics_item()
+            
+            if self._temp_bspline_path is None:
+                self._temp_bspline_path = temp_item
+                self._temp_bspline_path.setZValue(1000)
+                self._scene.addItem(self._temp_bspline_path)
+            else:
+                self._temp_bspline_path.setPath(temp_item.path())
+        except ValueError:
+            # Se houver erro ao criar a curva, desenha uma linha simples
+            path = QPainterPath()
+            path.moveTo(self._current_bspline_points[0].to_qpointf())
+            for point in self._current_bspline_points[1:]:
+                path.lineTo(point.to_qpointf())
+            path.lineTo(current_pos)
+            
+            if self._temp_bspline_path is None:
+                self._temp_bspline_path = QGraphicsPathItem(path)
+                self._temp_bspline_path.setPen(self._temp_item_pen)
+                self._temp_bspline_path.setZValue(1000)
+                self._scene.addItem(self._temp_bspline_path)
+            else:
+                self._temp_bspline_path.setPath(path)
+
+    def _update_bspline_status_message(self):
+        """
+        Atualiza a mensagem de status para o modo B-spline.
+        """
+        num_pts = len(self._current_bspline_points)
+        if num_pts == 0:
+            self.status_message_requested.emit(
+                "B-spline: clique para adicionar pontos de controle. Botão direito para finalizar.",
+                0,
+            )
+        else:
+            self.status_message_requested.emit(
+                f"B-spline: {num_pts} ponto(s) de controle adicionado(s). Botão direito para finalizar.",
+                0,
+            )
 
     def _finish_current_drawing(self, commit: bool = True) -> None:
         """
@@ -467,6 +545,29 @@ class DrawingController(QObject):
             ):  # Cancelled (e.g. mode change) when no points were even there
                 drawing_finished_or_cancelled = True
 
+        elif mode == DrawingMode.BSPLINE:
+            if self._current_bspline_points:
+                num_pts = len(self._current_bspline_points)
+                can_commit_bspline = num_pts >= 2  # B-spline precisa de pelo menos 2 pontos
+                
+                if commit and can_commit_bspline:
+                    bspline_data = BSplineCurve(
+                        self._current_bspline_points.copy(), color=color
+                    )
+                    self.object_ready_to_add.emit(bspline_data)
+                elif commit and not can_commit_bspline:
+                    QMessageBox.warning(
+                        None,
+                        "Pontos Insuficientes",
+                        "B-spline requer pelo menos 2 pontos de controle. Desenho não finalizado.",
+                    )
+                    return  # Early exit to keep drawing
+                    
+                # Reset state if committed successfully OR if explicitly cancelled
+                if (commit and can_commit_bspline) or not commit:
+                    self._current_bspline_points = []
+                    drawing_finished_or_cancelled = True
+
         if drawing_finished_or_cancelled:
             self._remove_temp_items()
             self.status_message_requested.emit("Pronto.", 1000)
@@ -476,6 +577,7 @@ class DrawingController(QObject):
             self._current_polygon_is_open = False
             self._current_polygon_is_filled = False
             self._current_bezier_points = []
+            self._current_bspline_points = []
             self._pending_first_polygon_point = None
 
     def _remove_temp_items(self) -> None:
@@ -488,6 +590,7 @@ class DrawingController(QObject):
             self._temp_line_item,
             self._temp_polygon_path,
             self._temp_bezier_path,
+            self._temp_bspline_path,
         ]
         for item in items_to_remove:
             if item and item.scene():
@@ -495,3 +598,4 @@ class DrawingController(QObject):
         self._temp_line_item = None
         self._temp_polygon_path = None
         self._temp_bezier_path = None
+        self._temp_bspline_path = None

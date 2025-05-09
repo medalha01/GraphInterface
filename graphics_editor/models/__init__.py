@@ -6,6 +6,7 @@ Este pacote fornece as seguintes classes:
 - Line: Representa um segmento de linha 2D
 - Polygon: Representa um polígono ou polilinha 2D
 - BezierCurve: Representa uma curva de Bézier cúbica composta
+- BSplineCurve: Representa uma curva B-spline usando diferenças progressivas
 
 Cada classe é responsável por:
 - Armazenar os dados geométricos do objeto
@@ -21,6 +22,7 @@ from .point import Point
 from .line import Line
 from .polygon import Polygon
 from .bezier_curve import BezierCurve
+from .bspline_curve import BSplineCurve
 
 # __all__ defines the public API of the models package when using 'from .models import *'
 # It's good practice to define it, even if not strictly necessary for direct imports.
@@ -29,4 +31,5 @@ __all__ = [
     "Line",
     "Polygon",
     "BezierCurve",
+    "BSplineCurve",
 ]

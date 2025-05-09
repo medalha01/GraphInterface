@@ -276,6 +276,7 @@ class GraphicsEditor(QMainWindow):
             DrawingMode.LINE,
             DrawingMode.POLYGON,
             DrawingMode.BEZIER,
+            DrawingMode.BSPLINE,
         ]:
             self._drawing_controller.handle_scene_left_click(scene_pos)
 
@@ -287,7 +288,7 @@ class GraphicsEditor(QMainWindow):
             scene_pos: Posição do clique na cena
         """
         mode = self._state_manager.drawing_mode()
-        if mode in [DrawingMode.POLYGON, DrawingMode.BEZIER]:
+        if mode in [DrawingMode.POLYGON, DrawingMode.BEZIER, DrawingMode.BSPLINE]:
             self._drawing_controller.handle_scene_right_click(scene_pos)
 
     def _handle_scene_mouse_move(self, scene_pos: QPointF):
@@ -298,7 +299,7 @@ class GraphicsEditor(QMainWindow):
             scene_pos: Posição atual do mouse na cena
         """
         mode = self._state_manager.drawing_mode()
-        if mode in [DrawingMode.LINE, DrawingMode.POLYGON, DrawingMode.BEZIER]:
+        if mode in [DrawingMode.LINE, DrawingMode.POLYGON, DrawingMode.BEZIER, DrawingMode.BSPLINE]:
             self._drawing_controller.handle_scene_mouse_move(scene_pos)
 
     def _set_drawing_mode(self, mode: DrawingMode):
