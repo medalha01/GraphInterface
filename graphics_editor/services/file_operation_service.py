@@ -1,8 +1,3 @@
-"""
-Módulo que define o serviço de operações de arquivo para o editor gráfico.
-Este módulo contém a implementação do serviço responsável por carregar e salvar arquivos OBJ/MTL.
-"""
-
 # graphics_editor/services/file_operation_service.py
 import os
 from typing import List, Optional, Tuple, Dict, Callable, Any
@@ -12,49 +7,42 @@ from PyQt5.QtWidgets import QWidget, QApplication, QMessageBox
 from PyQt5.QtGui import QColor
 
 from ..io_handler import IOHandler
-from ..object_manager import ObjectManager, DataObject
+from ..object_manager import (
+    ObjectManager,
+    DataObject as DataObject2D,
+)  # Alias para clareza
 from ..state_manager import EditorStateManager
 from ..controllers.scene_controller import SceneController
-from ..controllers.drawing_controller import DrawingController
+from ..controllers.drawing_controller import (
+    DrawingController,
+)  # Para cancelar desenho 2D
 
 
 class FileOperationService(QObject):
     """
-    Serviço responsável por gerenciar operações de arquivo do editor gráfico.
-    
-    Este serviço é responsável por:
-    - Carregar arquivos OBJ/MTL
-    - Salvar a cena atual em arquivos OBJ/MTL
-    - Gerenciar o estado de salvamento da cena
-    - Tratar avisos e erros durante operações de arquivo
+    Serviço responsável por gerenciar operações de arquivo do editor gráfico,
+    com foco em arquivos OBJ/MTL para objetos 2D.
+
+    Responsabilidades:
+    - Carregar arquivos OBJ/MTL (para dados 2D).
+    - Salvar a cena atual (objetos 2D) em arquivos OBJ/MTL.
+    - Gerenciar o estado de salvamento da cena.
+    - Tratar avisos e erros durante operações de arquivo.
     """
 
-    status_message_requested = pyqtSignal(str, int)
+    status_message_requested = pyqtSignal(str, int)  # (mensagem, timeout_ms)
 
     def __init__(
         self,
         parent_widget: QWidget,
         io_handler: IOHandler,
-        object_manager: ObjectManager,
+        object_manager: ObjectManager,  # Gerenciador de objetos 2D
         state_manager: EditorStateManager,
         scene_controller: SceneController,
-        drawing_controller: DrawingController,
+        drawing_controller: DrawingController,  # Para cancelar desenho 2D
         check_unsaved_changes_func: Callable[[str], bool],
         clear_scene_confirmed_func: Callable[[], None],
     ):
-        """
-        Inicializa o serviço de operações de arquivo.
-        
-        Args:
-            parent_widget: Widget pai para diálogos
-            io_handler: Manipulador de entrada/saída
-            object_manager: Gerenciador de objetos
-            state_manager: Gerenciador de estado do editor
-            scene_controller: Controlador da cena
-            drawing_controller: Controlador de desenho
-            check_unsaved_changes_func: Função para verificar alterações não salvas
-            clear_scene_confirmed_func: Função para limpar a cena
-        """
         super().__init__(parent_widget)
         self.parent_widget = parent_widget
         self.io_handler = io_handler
@@ -67,15 +55,12 @@ class FileOperationService(QObject):
 
     def prompt_load_obj(self) -> Tuple[Optional[str], int, int, List[str]]:
         """
-        Solicita ao usuário selecionar um arquivo OBJ para carregar.
-        
+        Solicita ao usuário selecionar um arquivo OBJ para carregar (objetos 2D).
+
         Returns:
-            Tuple[Optional[str], int, int, List[str]]: Tupla contendo:
-                - Caminho do arquivo carregado (ou None se cancelado)
-                - Número de objetos carregados com sucesso
-                - Número de objetos que falharam ao carregar
-                - Lista de avisos/erros
+            Tuple[Optional[str], int, int, List[str]]: (caminho_arquivo, num_adicionados, num_clipados, avisos)
         """
+        self.drawing_controller.cancel_current_drawing()  # Cancela desenho 2D ativo
         if not self.check_unsaved_changes("carregar um novo arquivo"):
             return (
                 None,
@@ -84,7 +69,7 @@ class FileOperationService(QObject):
                 ["Carregamento cancelado devido a alterações não salvas."],
             )
 
-        obj_filepath = self.io_handler.prompt_load_obj()
+        obj_filepath = self.io_handler.prompt_load_obj()  # Diálogo focado em OBJ 2D
         if obj_filepath:
             return self.load_obj_file(obj_filepath, clear_before_load=True)
         return None, 0, 0, ["Nenhum arquivo selecionado para carregar."]
@@ -93,28 +78,24 @@ class FileOperationService(QObject):
         self, obj_filepath: str, clear_before_load: bool = True
     ) -> Tuple[str, int, int, List[str]]:
         """
-        Carrega um arquivo OBJ e seus materiais associados.
-        
+        Carrega um arquivo OBJ (2D) e seus materiais associados.
+
         Args:
-            obj_filepath: Caminho do arquivo OBJ
-            clear_before_load: Se True, limpa a cena antes de carregar
-            
+            obj_filepath: Caminho do arquivo OBJ.
+            clear_before_load: Se True, limpa a cena (2D e 3D) antes de carregar.
+
         Returns:
-            Tuple[str, int, int, List[str]]: Tupla contendo:
-                - Caminho do arquivo carregado
-                - Número de objetos carregados com sucesso
-                - Número de objetos que falharam ao carregar
-                - Lista de avisos/erros
+            Tuple[str, int, int, List[str]]: (caminho_arquivo, num_adicionados, num_clipados, avisos)
         """
         self.status_message_requested.emit(
             f"Carregando {os.path.basename(obj_filepath)}...", 0
         )
-        QApplication.processEvents()
+        QApplication.processEvents()  # Processa eventos para atualizar UI
 
         obj_lines, material_colors, mtl_warnings = self._read_obj_and_mtl_data(
             obj_filepath
         )
-        if obj_lines is None:
+        if obj_lines is None:  # Erro crítico na leitura do OBJ
             self.status_message_requested.emit("Falha ao ler arquivo(s) OBJ/MTL.", 3000)
             return (
                 obj_filepath,
@@ -123,61 +104,47 @@ class FileOperationService(QObject):
                 mtl_warnings + ["Falha ao ler arquivo(s) OBJ/MTL."],
             )
 
-        parsed_objects, obj_warnings = self.object_manager.parse_obj_data(
+        # ObjectManager analisa e cria objetos 2D
+        parsed_2d_objects, obj_parse_warnings = self.object_manager.parse_obj_data(
             obj_lines, material_colors, self.state_manager.draw_color()
         )
-        all_warnings = mtl_warnings + obj_warnings
+        all_warnings = mtl_warnings + obj_parse_warnings
 
         if clear_before_load:
-            # This also resets the scene_controller's map
-            self.clear_scene_confirmed()
+            self.clear_scene_confirmed()  # Limpa todos os objetos da cena (2D e 3D)
 
-        num_total_parsed = len(parsed_objects)
-        num_successfully_added_from_this_file = 0
+        num_total_parsed = len(parsed_2d_objects)
+        num_successfully_added = 0
 
-        for obj_from_file in parsed_objects:
-            # Add without marking modified yet during this bulk load.
-            # The final state mark will be handled after all objects are processed.
+        for obj_2d in parsed_2d_objects:
+            # Adiciona à cena; SceneController trata clipping visual
             graphics_item = self.scene_controller.add_object(
-                obj_from_file, mark_modified=False
+                obj_2d, mark_modified=False
             )
             if graphics_item:
-                num_successfully_added_from_this_file += 1
+                num_successfully_added += 1
 
-        num_clipped_out_or_failed_from_this_file = (
-            num_total_parsed - num_successfully_added_from_this_file
-        )
+        num_clipped_or_failed = num_total_parsed - num_successfully_added
 
-        # After loading, mark scene based on whether objects were added
-        if num_successfully_added_from_this_file > 0:
-            self.state_manager.mark_as_modified()  # Scene has changed
+        if num_successfully_added > 0:
+            self.state_manager.mark_as_modified()  # Cena alterada
 
-        # Set current file path and consider it "saved" initially after load
-        self.state_manager.set_current_filepath(obj_filepath)
-        self.state_manager.mark_as_saved()
+        self.state_manager.set_current_filepath(
+            obj_filepath
+        )  # Define como arquivo atual
+        self.state_manager.mark_as_saved()  # Considera arquivo carregado como "salvo" inicialmente
 
         return (
             obj_filepath,
-            num_successfully_added_from_this_file,
-            num_clipped_out_or_failed_from_this_file,
+            num_successfully_added,
+            num_clipped_or_failed,
             all_warnings,
         )
 
     def _read_obj_and_mtl_data(
         self, obj_filepath: str
     ) -> Tuple[Optional[List[str]], Dict[str, QColor], List[str]]:
-        """
-        Lê os dados do arquivo OBJ e seu arquivo MTL associado.
-        
-        Args:
-            obj_filepath: Caminho do arquivo OBJ
-            
-        Returns:
-            Tuple[Optional[List[str]], Dict[str, QColor], List[str]]: Tupla contendo:
-                - Linhas do arquivo OBJ (ou None se falhar)
-                - Dicionário de cores dos materiais
-                - Lista de avisos/erros
-        """
+        """Lê dados do arquivo OBJ e seu MTL associado (para 2D)."""
         all_warnings: List[str] = []
         material_colors: Dict[str, QColor] = {}
         read_result = self.io_handler.read_obj_lines(obj_filepath)
@@ -203,29 +170,23 @@ class FileOperationService(QObject):
         return obj_lines, material_colors, all_warnings
 
     def prompt_save_as_obj(self) -> bool:
-        """
-        Solicita ao usuário selecionar um local para salvar a cena como OBJ.
-        
-        Returns:
-            bool: True se o salvamento foi bem-sucedido, False caso contrário
-        """
+        """Solicita local para salvar a cena como OBJ (objetos 2D)."""
         self.drawing_controller.cancel_current_drawing()
         current_path = self.state_manager.current_filepath()
         default_name = (
-            os.path.basename(current_path) if current_path else "nova_cena.obj"
+            os.path.basename(current_path) if current_path else "nova_cena_2d.obj"
         )
 
-        base_filepath = self.io_handler.prompt_save_obj(default_name)
+        base_filepath = self.io_handler.prompt_save_obj(
+            default_name
+        )  # Diálogo focado em 2D
         if not base_filepath:
-            self.status_message_requested.emit("Salvar cancelado.", 2000)
+            self.status_message_requested.emit("Salvar (2D) cancelado.", 2000)
             return False
 
         success, warnings, has_mtl = self._save_to_file(base_filepath)
-
         if success:
-            self.state_manager.set_current_filepath(
-                base_filepath + ".obj"
-            )  # Save full .obj path
+            self.state_manager.set_current_filepath(base_filepath + ".obj")
             self.state_manager.mark_as_saved()
             if hasattr(self.parent_widget, "_report_save_results"):
                 self.parent_widget._report_save_results(
@@ -233,27 +194,21 @@ class FileOperationService(QObject):
                 )
             return True
         else:
-            self.status_message_requested.emit("Falha ao salvar.", 3000)
+            self.status_message_requested.emit("Falha ao salvar (2D).", 3000)
             if hasattr(self.parent_widget, "_report_save_results"):
                 self.parent_widget._report_save_results(
-                    base_filepath, False, warnings, has_mtl
+                    base_filepath, False, warnings, has_mtl, is_generation_error=True
                 )
             return False
 
     def save_current_file(self) -> bool:
-        """
-        Salva a cena atual no arquivo OBJ atual.
-        Se não houver arquivo atual, solicita um novo local.
-        
-        Returns:
-            bool: True se o salvamento foi bem-sucedido, False caso contrário
-        """
+        """Salva a cena atual no arquivo OBJ atual (objetos 2D)."""
         current_path = self.state_manager.current_filepath()
-        if not current_path:
+        if not current_path:  # Se não há caminho, age como "Salvar Como"
             return self.prompt_save_as_obj()
         else:
             self.drawing_controller.cancel_current_drawing()
-            base_filepath, _ = os.path.splitext(current_path)
+            base_filepath, _ = os.path.splitext(current_path)  # Remove extensão .obj
             success, warnings, has_mtl = self._save_to_file(base_filepath)
             if success:
                 self.state_manager.mark_as_saved()
@@ -265,45 +220,50 @@ class FileOperationService(QObject):
 
     def _save_to_file(self, base_filepath: str) -> Tuple[bool, List[str], bool]:
         """
-        Salva a cena atual em arquivos OBJ e MTL.
-        
+        Salva a cena atual (objetos 2D) em arquivos OBJ e MTL.
+
         Args:
-            base_filepath: Caminho base para os arquivos (sem extensão)
-            
+            base_filepath: Caminho base para os arquivos (sem extensão).
+
         Returns:
-            Tuple[bool, List[str], bool]: Tupla contendo:
-                - True se o salvamento foi bem-sucedido
-                - Lista de avisos/erros
-                - True se um arquivo MTL foi gerado
+            Tuple[bool, List[str], bool]: (sucesso, avisos, mtl_gerado)
         """
         self.status_message_requested.emit(
-            f"Salvando em {os.path.basename(base_filepath)}...", 0
+            f"Salvando 2D em {os.path.basename(base_filepath)}...", 0
         )
         QApplication.processEvents()
 
-        scene_data_objects = (
-            self.scene_controller.get_all_original_data_objects()
-        )  # Get original objects
-        if not scene_data_objects:
-            self.status_message_requested.emit("Nada para salvar (cena vazia).", 2000)
-            # Ensure an empty OBJ is still valid if it gets written
+        # Pega apenas objetos 2D para salvar
+        scene_2d_data_objects = [
+            obj
+            for obj in self.scene_controller.get_all_original_data_objects()
+            if isinstance(obj, DataObject2D)  # Garante que é um tipo de objeto 2D
+        ]
+
+        if not scene_2d_data_objects:
+            self.status_message_requested.emit(
+                "Nada para salvar (cena 2D vazia).", 2000
+            )
+            # Cria um arquivo OBJ vazio válido
             empty_obj_lines = ["# Arquivo OBJ (Editor Gráfico 2D)", "# Cena Vazia"]
             obj_ok = self.io_handler.write_obj_and_mtl(
                 base_filepath, empty_obj_lines, None
             )
-            return obj_ok, ["Cena vazia, arquivo OBJ salvo vazio."], False
+            return obj_ok, ["Cena 2D vazia, arquivo OBJ salvo vazio."], False
 
         mtl_filename_for_obj_ref = os.path.basename(base_filepath) + ".mtl"
         obj_lines, mtl_lines, gen_warnings = self.object_manager.generate_obj_data(
-            scene_data_objects, mtl_filename_for_obj_ref
+            scene_2d_data_objects, mtl_filename_for_obj_ref
         )
 
-        if obj_lines is None:
+        if obj_lines is None:  # Erro crítico na geração dos dados
             return False, gen_warnings + ["Falha ao gerar dados OBJ/MTL."], False
 
         write_success = self.io_handler.write_obj_and_mtl(
             base_filepath, obj_lines, mtl_lines
         )
-        has_mtl = mtl_lines is not None and len(mtl_lines) > 0
+        has_mtl = (
+            mtl_lines is not None and len(mtl_lines) > 3
+        )  # Verifica se MTL tem mais que cabeçalhos
 
         return write_success, gen_warnings, has_mtl

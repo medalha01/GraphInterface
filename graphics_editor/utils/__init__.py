@@ -1,12 +1,19 @@
+# graphics_editor/utils/__init__.py
 """
-Pacote que contém utilitários para o editor gráfico.
+Pacote de utilitários para o editor gráfico.
 
-Este pacote fornece os seguintes módulos:
-- clipping.py: Implementa algoritmos de recorte (Cohen-Sutherland, Liang-Barsky, Sutherland-Hodgman)
-- transformations.py: Implementa transformações geométricas 2D usando matrizes homogêneas
-
-Cada módulo é responsável por:
-- Fornecer funções utilitárias específicas
-- Implementar algoritmos geométricos fundamentais
-- Suportar operações comuns do editor gráfico
+Contém módulos para:
+- clipping: Algoritmos de recorte 2D (Cohen-Sutherland, Liang-Barsky, Sutherland-Hodgman).
+- transformations: Funções para transformações geométricas 2D usando matrizes homogêneas.
+- transformations_3d: Funções para transformações geométricas 3D e projeção.
 """
+
+from . import clipping
+from . import transformations
+from . import transformations_3d  # Novo
+
+__all__ = [
+    "clipping",
+    "transformations",
+    "transformations_3d",
+]
