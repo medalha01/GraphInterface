@@ -3,23 +3,22 @@ Módulo que define a classe Point para representação de pontos 2D.
 Este módulo contém a implementação de pontos geométricos com coordenadas e cor.
 """
 
-# point.py
 # graphics_editor/models/point.py
 from PyQt5.QtCore import Qt, QPointF, QRectF
 from PyQt5.QtGui import QPen, QBrush, QColor
 from PyQt5.QtWidgets import QGraphicsItem, QGraphicsEllipseItem
-from typing import Tuple, List, Optional  # Import Optional
+from typing import Tuple, List, Optional
 
 
 class Point:
     """
     Representa um ponto geométrico 2D com coordenadas e cor.
-    
-    Esta classe é responsável por:
-    - Armazenar coordenadas (x, y) de um ponto
-    - Gerenciar a cor do ponto
-    - Criar a representação gráfica do ponto
-    - Fornecer métodos para manipulação de coordenadas
+
+    Responsável por:
+    - Armazenar coordenadas (x, y) de um ponto.
+    - Gerenciar a cor do ponto.
+    - Criar a representação gráfica QGraphicsItem do ponto.
+    - Fornecer métodos para manipulação de coordenadas.
     """
 
     GRAPHICS_SIZE = 6.0  # Diâmetro visual do ponto na cena
@@ -27,34 +26,28 @@ class Point:
     def __init__(self, x: float, y: float, color: Optional[QColor] = None):
         """
         Inicializa um ponto com coordenadas e cor.
-        
+
         Args:
-            x: Coordenada x do ponto
-            y: Coordenada y do ponto
-            color: Cor do ponto (opcional, padrão é preto)
+            x: Coordenada x do ponto.
+            y: Coordenada y do ponto.
+            color: Cor do ponto (opcional, padrão é preto).
         """
         self.x: float = float(x)
         self.y: float = float(y)
-        # Cor padrão preta se não fornecida ou inválida
         self.color: QColor = (
             color if isinstance(color, QColor) and color.isValid() else QColor(Qt.black)
         )
 
     def to_qpointf(self) -> QPointF:
-        """
-        Converte o ponto para o formato QPointF do Qt.
-        
-        Returns:
-            QPointF: Ponto no formato Qt
-        """
+        """Converte o ponto para o formato QPointF do Qt."""
         return QPointF(self.x, self.y)
 
     def create_graphics_item(self) -> QGraphicsEllipseItem:
         """
-        Cria a representação gráfica do ponto como um item da cena.
-        
+        Cria a representação gráfica do ponto como um QGraphicsEllipseItem.
+
         Returns:
-            QGraphicsEllipseItem: Item gráfico representando o ponto
+            QGraphicsEllipseItem: Item gráfico representando o ponto.
         """
         offset = self.GRAPHICS_SIZE / 2.0
         # Cria elipse centrada em (x, y)
@@ -62,44 +55,34 @@ class Point:
             self.x - offset, self.y - offset, self.GRAPHICS_SIZE, self.GRAPHICS_SIZE
         )
 
-        # Aparência
-        pen = QPen(self.color, 1)  # Borda fina
-        brush = QBrush(self.color)  # Preenchimento sólido
+        pen = QPen(self.color, 1)  # Borda fina com a cor do ponto
+        brush = QBrush(self.color)  # Preenchimento sólido com a cor do ponto
         point_item.setPen(pen)
         point_item.setBrush(brush)
 
-        # Flags para interação
         point_item.setFlag(QGraphicsItem.ItemIsSelectable)
-        # point_item.setFlag(QGraphicsItem.ItemIsMovable) # Allow move
-
-        # SceneController will handle setting SC_ORIGINAL_OBJECT_KEY and SC_CURRENT_REPRESENTATION_KEY
-        # point_item.setData(0, self) # Removed as per issue #6
+        # A movimentação é geralmente tratada pelo SceneController ou View,
+        # não habilitada diretamente no item por padrão.
+        # point_item.setFlag(QGraphicsItem.ItemIsMovable)
         return point_item
 
     def get_coords(self) -> Tuple[float, float]:
-        """
-        Retorna as coordenadas do ponto.
-        
-        Returns:
-            Tuple[float, float]: Tupla contendo as coordenadas (x, y)
-        """
+        """Retorna as coordenadas (x, y) do ponto."""
         return (self.x, self.y)
 
     def get_center(self) -> Tuple[float, float]:
-        """
-        Retorna o centro geométrico do ponto.
-        Para um ponto, o centro é o próprio ponto.
-        
-        Returns:
-            Tuple[float, float]: Tupla contendo as coordenadas do centro
-        """
+        """Retorna o centro geométrico do ponto (que é o próprio ponto)."""
         return self.get_coords()
 
     def __repr__(self) -> str:
-        """
-        Retorna uma representação textual do ponto.
-        
-        Returns:
-            str: String representando o ponto com suas coordenadas e cor
-        """
+        """Retorna uma representação textual do ponto."""
         return f"Point(x={self.x:.3f}, y={self.y:.3f}, color={self.color.name()})"
+
+    def __eq__(self, other: object) -> bool:
+        """Verifica se dois Pontos são iguais (baseado nas coordenadas)."""
+        if not isinstance(other, Point):
+            return NotImplemented
+        # Compara com uma pequena tolerância para pontos flutuantes
+        epsilon = 1e-9
+        return abs(self.x - other.x) < epsilon and abs(self.y - other.y) < epsilon
+        # A cor não é considerada para igualdade geométrica aqui.
