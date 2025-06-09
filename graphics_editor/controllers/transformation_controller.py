@@ -13,26 +13,28 @@ from PyQt5.QtWidgets import QMessageBox, QDialog, QWidget
 from typing import Union, Optional, Dict, Any, List, Tuple
 
 from ..models import Point, Line, Polygon, BezierCurve, BSplineCurve  # Modelos 2D
-from ..models.ponto3d import Ponto3D  # Modelo 3D
-from ..models.objeto3d import Objeto3D  # Modelo 3D
+from ..models.point3D import Point3D  # Modelo 3D
+from ..models.geometric_shape_3D import GeometricShape3D  # Modelo 3D
 from ..dialogs.transformation_dialog import TransformationDialog
 from ..utils import transformations as tf2d  # Transformações 2D
 from ..utils import transformations_3d as tf3d  # Transformações 3D
 
 # Tipos de objetos transformáveis
 TransformableObject2D = Union[Point, Line, Polygon, BezierCurve, BSplineCurve]
-TransformableObject3D = Union[Ponto3D, Objeto3D]  # Objeto3D contém Ponto3D
+TransformableObject3D = Union[
+    Point3D, GeometricShape3D
+]  # GeometricShape3D contém Point3D
 AnyTransformableObject = Union[TransformableObject2D, TransformableObject3D]
 
 # Tuplas de tipos para checagem com isinstance
 TRANSFORMABLE_TYPES_2D = (Point, Line, Polygon, BezierCurve, BSplineCurve)
-TRANSFORMABLE_TYPES_3D = (Ponto3D, Objeto3D)
+TRANSFORMABLE_TYPES_3D = (Point3D, GeometricShape3D)
 
 
 class TransformationController(QObject):
-"""
+    """
     Controlador responsável por aplicar transformações geométricas aos objetos.
-    
+
     Este controlador gerencia:
     - Aplicação de transformações 2D (translação, escala, rotação)
     - Interação com o usuário para obter parâmetros de transformação
@@ -45,7 +47,7 @@ class TransformationController(QObject):
     def __init__(self, parent: Optional[QWidget] = None):
         """
         Inicializa o controlador de transformações.
-        
+
         Args:
             parent: Widget pai para diálogos (opcional)
         """
@@ -85,9 +87,9 @@ class TransformationController(QObject):
     def _perform_transformation_2d(
         self, data_object: TransformableObject2D, params: Dict[str, Any]
     ) -> None:
-"""
+        """
         Aplica uma transformação geométrica ao objeto.
-        
+
         Args:
             data_object: Objeto a ser transformado
             params: Dicionário com os parâmetros da transformação:
@@ -199,7 +201,7 @@ class TransformationController(QObject):
             elif transform_type == "scale_center_3d":
                 center = (
                     data_object.get_center()
-                )  # Assume que Objeto3D e Ponto3D têm get_center() -> Tuple[x,y,z]
+                )  # Assume que GeometricShape3D e Point3D têm get_center() -> Tuple[x,y,z]
                 T_orig = tf3d.create_translation_matrix_3d(
                     -center[0], -center[1], -center[2]
                 )
@@ -239,12 +241,12 @@ class TransformationController(QObject):
                 )
 
             # Aplica a transformação
-            if isinstance(data_object, Ponto3D):
+            if isinstance(data_object, Point3D):
                 hom_coords = data_object.get_homogeneous_coords()
                 transformed_hom_coords = matrix @ hom_coords
                 data_object.set_from_homogeneous_coords(transformed_hom_coords)
-            elif isinstance(data_object, Objeto3D):
-                # Objeto3D tem um método para aplicar a matriz a todos os seus Ponto3D
+            elif isinstance(data_object, GeometricShape3D):
+                # GeometricShape3D tem um método para aplicar a matriz a todos os seus Point3D
                 data_object.apply_transformation_matrix(matrix)
 
             self.object_transformed.emit(data_object)

@@ -23,8 +23,8 @@ from PyQt5.QtGui import (
 )
 
 from ..models import Point, Line, Polygon, BezierCurve, BSplineCurve  # Modelos 2D
-from ..models.ponto3d import Ponto3D  # Modelo 3D
-from ..models.objeto3d import Objeto3D  # Modelo 3D
+from ..models.point3D import Point3D  # Modelo 3D
+from ..models.geometric_shape_3D import GeometricShape3D  # Modelo 3D
 from ..models import __all__ as model_names_list  # Para obter todos os nomes de modelos
 
 _models_module = __import__("graphics_editor.models", fromlist=model_names_list)
@@ -33,10 +33,10 @@ DATA_OBJECT_TYPES_ALL = tuple(
     getattr(_models_module, name) for name in model_names_list
 )
 DATA_OBJECT_TYPES_2D = (Point, Line, Polygon, BezierCurve, BSplineCurve)
-DATA_OBJECT_TYPES_3D = (Ponto3D, Objeto3D)
+DATA_OBJECT_TYPES_3D = (Point3D, GeometricShape3D)
 
 AnyDataObject = Union[
-    Point, Line, Polygon, BezierCurve, BSplineCurve, Ponto3D, Objeto3D
+    Point, Line, Polygon, BezierCurve, BSplineCurve, Point3D, GeometricShape3D
 ]
 
 from ..state_manager import EditorStateManager, LineClippingAlgorithm, ProjectionMode
@@ -379,7 +379,7 @@ class SceneController(QObject):
             )
             model_matrix = tf3d.create_identity_matrix_3d()
 
-            if isinstance(original_data_object, Ponto3D):
+            if isinstance(original_data_object, Point3D):
                 p_coords_3d = original_data_object.get_coords()
                 q_point_f_2d = tf3d.project_point_3d_to_qpointf(
                     p_coords_3d,
@@ -393,7 +393,7 @@ class SceneController(QObject):
                         q_point_f_2d.x(), q_point_f_2d.y(), original_data_object.color
                     )
                     display_type_changed = True
-            elif isinstance(original_data_object, Objeto3D):
+            elif isinstance(original_data_object, GeometricShape3D):
                 display_object = original_data_object
                 display_type_changed = True
         return display_object, display_type_changed
@@ -413,7 +413,7 @@ class SceneController(QObject):
         if is_projected_3d_flag:
             if isinstance(display_data_object, Point):
                 return QGraphicsEllipseItem
-            elif isinstance(display_data_object, Objeto3D):
+            elif isinstance(display_data_object, GeometricShape3D):
                 return QGraphicsPathItem
             return None
         if isinstance(display_data_object, Point):
@@ -467,9 +467,11 @@ class SceneController(QObject):
                         graphics_item = (
                             display_data_for_item_creation.create_graphics_item()
                         )
-                    elif isinstance(original_data_object, Objeto3D):
-                        projected_lines = self._get_projected_lines_for_objeto3d(
-                            original_data_object
+                    elif isinstance(original_data_object, GeometricShape3D):
+                        projected_lines = (
+                            self._get_projected_lines_for_GeometricShape3D(
+                                original_data_object
+                            )
                         )
                         if projected_lines:
                             graphics_item = original_data_object.create_graphics_item(
@@ -507,7 +509,9 @@ class SceneController(QObject):
             self.scene_modified.emit(True)
         return None
 
-    def _get_projected_lines_for_objeto3d(self, objeto3d: Objeto3D) -> List[QLineF]:
+    def _get_projected_lines_for_GeometricShape3D(
+        self, GeometricShape3D: GeometricShape3D
+    ) -> List[QLineF]:
         projected_lines: List[QLineF] = []
         vrp = self._state_manager.camera_vrp()
         target = self._state_manager.camera_target()
@@ -543,7 +547,7 @@ class SceneController(QObject):
         )
         model_m = tf3d.create_identity_matrix_3d()
 
-        for p1_3d, p2_3d in objeto3d.segments:
+        for p1_3d, p2_3d in GeometricShape3D.segments:
             q_p1 = tf3d.project_point_3d_to_qpointf(
                 p1_3d.get_coords(), model_m, view_m, proj_m, viewport_rect_params
             )
@@ -658,9 +662,13 @@ class SceneController(QObject):
                             new_graphics_item = (
                                 new_display_representation.create_graphics_item()
                             )
-                        elif isinstance(original_modified_data_object, Objeto3D):
-                            projected_lines = self._get_projected_lines_for_objeto3d(
-                                original_modified_data_object
+                        elif isinstance(
+                            original_modified_data_object, GeometricShape3D
+                        ):
+                            projected_lines = (
+                                self._get_projected_lines_for_GeometricShape3D(
+                                    original_modified_data_object
+                                )
                             )
                             if projected_lines:
                                 new_graphics_item = (
@@ -710,7 +718,7 @@ class SceneController(QObject):
                     obj_for_3d_geom_update = (
                         original_modified_data_object
                         if is_3d_original
-                        and isinstance(original_modified_data_object, Objeto3D)
+                        and isinstance(original_modified_data_object, GeometricShape3D)
                         else None
                     )
                     self._update_graphics_item_geometry(
@@ -739,7 +747,7 @@ class SceneController(QObject):
         item: QGraphicsItem,
         display_data_obj: AnyDataObject,
         is_projected_3d_flag: bool,
-        original_3d_obj_for_path: Optional[Objeto3D] = None,
+        original_3d_obj_for_path: Optional[GeometricShape3D] = None,
     ):
         """
         Atualiza a geometria de um item gráfico baseado nos dados de exibição.
@@ -762,10 +770,10 @@ class SceneController(QObject):
                             size,
                         )
                     )
-                elif isinstance(original_3d_obj_for_path, Objeto3D) and isinstance(
-                    item, QGraphicsPathItem
-                ):
-                    projected_lines = self._get_projected_lines_for_objeto3d(
+                elif isinstance(
+                    original_3d_obj_for_path, GeometricShape3D
+                ) and isinstance(item, QGraphicsPathItem):
+                    projected_lines = self._get_projected_lines_for_GeometricShape3D(
                         original_3d_obj_for_path
                     )
                     new_path = QPainterPath()
@@ -852,11 +860,11 @@ class SceneController(QObject):
         pen = QPen(Qt.NoPen)
         brush = QBrush(Qt.NoBrush)
         if is_projected_3d_flag:
-            if isinstance(original_data_object, Ponto3D):
+            if isinstance(original_data_object, Point3D):
                 pen = QPen(color, 1)
                 brush = QBrush(color)
-            elif isinstance(original_data_object, Objeto3D):
-                pen = QPen(color, Objeto3D.GRAPHICS_LINE_WIDTH, Qt.SolidLine)
+            elif isinstance(original_data_object, GeometricShape3D):
+                pen = QPen(color, GeometricShape3D.GRAPHICS_LINE_WIDTH, Qt.SolidLine)
                 pen.setJoinStyle(Qt.RoundJoin)
                 pen.setCapStyle(Qt.RoundCap)
         else:

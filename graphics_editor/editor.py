@@ -56,8 +56,8 @@ from PyQt5.QtWidgets import QApplication
 # Importações relativas dentro do pacote
 from .view.main_view import GraphicsView
 from .models import Point, Line, Polygon, BezierCurve, BSplineCurve
-from .models.ponto3d import Ponto3D
-from .models.objeto3d import Objeto3D
+from .models.point3D import Point3D
+from .models.geometric_shape_3D import GeometricShape3D
 from .dialogs.coordinates_input import CoordinateInputDialog
 from .dialogs.transformation_dialog import TransformationDialog
 from .dialogs.camera_dialog import CameraDialog
@@ -87,7 +87,7 @@ from .controllers.scene_controller import (
 from .ui_manager import UIManager
 from .services.file_operation_service import FileOperationService
 
-DATA_OBJECT_TYPES_3D = (Ponto3D, Objeto3D)
+DATA_OBJECT_TYPES_3D = (Point3D, GeometricShape3D)
 
 
 class GraphicsEditor(QMainWindow):
@@ -659,15 +659,16 @@ class GraphicsEditor(QMainWindow):
         self.setWindowTitle(title)
 
     def _check_unsaved_changes(self, action_desc: str = "prosseguir") -> bool:
-         """
+        """
         Verifica se há alterações não salvas antes de executar uma ação.
-        
+
         Args:
             action_description: Descrição da ação que será executada
-            
+
         Returns:
             bool: True se pode prosseguir, False se deve cancelar
         """
+
         if not self._state_manager.has_unsaved_changes():
             return True
         reply = QMessageBox.warning(
@@ -718,11 +719,11 @@ class GraphicsEditor(QMainWindow):
     ) -> Optional[AnyDataObject]:
         """
         Cria um objeto de dados baseado nos resultados do diálogo.
-        
+
         Args:
             result_data: Dados inseridos pelo usuário
             dialog_mode_str: Modo do diálogo que gerou os dados
-            
+
         Returns:
             Optional[DataObject]: Objeto criado ou None se inválido
         """
@@ -797,7 +798,7 @@ class GraphicsEditor(QMainWindow):
     ):
         """
         Reporta os resultados do carregamento de um arquivo OBJ.
-        
+
         Args:
             obj_filepath: Caminho do arquivo carregado
             num_added: Número de objetos adicionados
@@ -854,7 +855,7 @@ class GraphicsEditor(QMainWindow):
     ):
         """
         Reporta os resultados do salvamento de um arquivo.
-        
+
         Args:
             base_filepath: Caminho base do arquivo
             success: Indica se o salvamento foi bem sucedido
@@ -900,7 +901,7 @@ class GraphicsEditor(QMainWindow):
     def _toggle_viewport_visibility(self, checked: bool):
         """
         Alterna a visibilidade do retângulo de recorte.
-        
+
         Args:
             checked: Estado do checkbox de visibilidade
         """
@@ -911,7 +912,7 @@ class GraphicsEditor(QMainWindow):
     def _update_clip_rect_item(self, rect: QRectF):
         """
         Atualiza o retângulo de recorte na cena.
-        
+
         Args:
             rect: Novo retângulo de recorte
         """
@@ -955,7 +956,7 @@ class GraphicsEditor(QMainWindow):
             is_filled = fill_reply == QMessageBox.Yes
         self._drawing_controller.set_pending_polygon_properties(is_open, is_filled)
 
-    def _create_object_3d_at_center(self, obj: Objeto3D, name_str: str):
+    def _create_object_3d_at_center(self, obj: GeometricShape3D, name_str: str):
         """Adiciona um objeto 3D e tenta centralizar a câmera nele (simplificado)."""
         self._scene_controller.add_object(obj)  # Adiciona e projeta
 
@@ -994,7 +995,7 @@ class GraphicsEditor(QMainWindow):
             (s / 2, s / 2, s / 2),
             (-s / 2, s / 2, s / 2),
         ]
-        pts = [Ponto3D(x, y, z, color) for x, y, z in pts_data]
+        pts = [Point3D(x, y, z, color) for x, y, z in pts_data]
         segs = [
             (pts[0], pts[1]),
             (pts[1], pts[2]),
@@ -1009,7 +1010,7 @@ class GraphicsEditor(QMainWindow):
             (pts[2], pts[6]),
             (pts[3], pts[7]),
         ]
-        cube = Objeto3D("Cubo", segs, color)
+        cube = GeometricShape3D("Cubo", segs, color)
         self._create_object_3d_at_center(cube, "Cubo")
 
     def _create_pyramid_3d(self):
@@ -1018,7 +1019,7 @@ class GraphicsEditor(QMainWindow):
         height = 100.0
         s = base_size / 2.0
         pts_data = [(-s, -s, 0), (s, -s, 0), (s, s, 0), (-s, s, 0), (0, 0, height)]
-        pts = [Ponto3D(x, y, z, color) for x, y, z in pts_data]
+        pts = [Point3D(x, y, z, color) for x, y, z in pts_data]
         segs = [
             (pts[0], pts[1]),
             (pts[1], pts[2]),
@@ -1029,7 +1030,7 @@ class GraphicsEditor(QMainWindow):
             (pts[2], pts[4]),
             (pts[3], pts[4]),
         ]
-        pyramid = Objeto3D("Piramide", segs, color)
+        pyramid = GeometricShape3D("Piramide", segs, color)
         self._create_object_3d_at_center(pyramid, "Pirâmide")
 
     def _open_camera_dialog(self):
@@ -1064,7 +1065,7 @@ class GraphicsEditor(QMainWindow):
         """
         Manipula o evento de fechamento da janela.
         Verifica alterações não salvas antes de fechar.
-        
+
         Args:
             event: Evento de fechamento
         """

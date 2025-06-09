@@ -8,8 +8,8 @@ Este pacote fornece os seguintes modelos:
 - Polygon: Representa um polígono 2D.
 - BezierCurve: Representa uma curva de Bézier 2D.
 - BSplineCurve: Representa uma curva B-spline 2D.
-- Ponto3D: Representa um ponto 3D.
-- Objeto3D: Representa um objeto de modelo de arame 3D.
+- Point3D: Representa um ponto 3D.
+- GeometricShape3D: Representa um objeto de modelo de arame 3D.
 
 Cada modelo é responsável por:
 - Armazenar dados geométricos e de aparência.
@@ -23,8 +23,8 @@ from .line import Line
 from .polygon import Polygon
 from .bezier_curve import BezierCurve
 from .bspline_curve import BSplineCurve
-from .ponto3d import Ponto3D  # Novo modelo 3D
-from .objeto3d import Objeto3D  # Novo modelo 3D
+from .point3D import Point3D  # Novo modelo 3D
+from .geometric_shape_3D import GeometricShape3D  # Novo modelo 3D
 
 
 # Lista de todos os modelos exportados para facilitar importações com '*'
@@ -35,6 +35,6 @@ __all__ = [
     "Polygon",
     "BezierCurve",
     "BSplineCurve",
-    "Ponto3D",
-    "Objeto3D",
+    "Point3D",
+    "GeometricShape3D",
 ]

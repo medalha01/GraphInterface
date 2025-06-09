@@ -1,19 +1,19 @@
-# graphics_editor/models/objeto3d.py
+# graphics_editor/models/GeometricShape3D.py
 from typing import List, Tuple, Optional
 from PyQt5.QtGui import QColor, QPainterPath, QPen
 from PyQt5.QtCore import Qt, QLineF
 from PyQt5.QtWidgets import QGraphicsPathItem, QGraphicsItem
 import numpy as np
 
-from .ponto3d import Ponto3D
+from .point3D import Point3D
 
 
-class Objeto3D:
+class GeometricShape3D:
     """
     Representa um objeto 3D como um modelo de arame (wireframe).
 
     Esta classe é responsável por:
-    - Armazenar uma lista de segmentos de reta, cada um definido por um par de Ponto3D.
+    - Armazenar uma lista de segmentos de reta, cada um definido por um par de Point3D.
     - Gerenciar o nome e a cor do objeto.
     - Aplicar transformações geométricas 3D ao objeto.
     - Criar uma representação gráfica 2D (QGraphicsPathItem) a partir de linhas projetadas.
@@ -24,29 +24,29 @@ class Objeto3D:
     def __init__(
         self,
         name: str,
-        segments: List[Tuple[Ponto3D, Ponto3D]],
+        segments: List[Tuple[Point3D, Point3D]],
         color: Optional[QColor] = None,
     ):
         """
-        Inicializa um Objeto3D.
+        Inicializa um GeometricShape3D.
 
         Args:
             name: Nome do objeto.
-            segments: Lista de tuplas, onde cada tupla contém dois Ponto3D definindo um segmento.
+            segments: Lista de tuplas, onde cada tupla contém dois Point3D definindo um segmento.
             color: Cor do objeto (opcional, padrão é preto).
         """
         self.name: str = name
-        self.segments: List[Tuple[Ponto3D, Ponto3D]] = segments
+        self.segments: List[Tuple[Point3D, Point3D]] = segments
         self.color: QColor = (
             color if isinstance(color, QColor) and color.isValid() else QColor(Qt.black)
         )
 
-    def get_all_points(self) -> List[Ponto3D]:
+    def get_all_points(self) -> List[Point3D]:
         """
-        Retorna uma lista de todos os Ponto3D únicos que compõem o objeto.
+        Retorna uma lista de todos os Point3D únicos que compõem o objeto.
 
         Returns:
-            List[Ponto3D]: Lista de pontos únicos.
+            List[Point3D]: Lista de pontos únicos.
         """
         unique_points_map = {id(p): p for seg in self.segments for p in seg}
         return list(unique_points_map.values())
@@ -90,7 +90,7 @@ class Objeto3D:
         Args:
             matrix: Matriz de transformação NumPy 4x4.
         """
-        for point in self.get_all_points():  # Transforma os Ponto3D únicos
+        for point in self.get_all_points():  # Transforma os Point3D únicos
             hom_coords = point.get_homogeneous_coords()
             transformed_hom_coords = matrix @ hom_coords
             point.set_from_homogeneous_coords(transformed_hom_coords)
@@ -192,10 +192,10 @@ class Objeto3D:
         return item
 
     def __repr__(self) -> str:
-        return f"Objeto3D(name='{self.name}', segments={len(self.segments)}, color={self.color.name()})"
+        return f"GeometricShape3D(name='{self.name}', segments={len(self.segments)}, color={self.color.name()})"
 
     def __eq__(self, other: object) -> bool:
-        if not isinstance(other, Objeto3D):
+        if not isinstance(other, GeometricShape3D):
             return NotImplemented
         # Uma comparação mais robusta poderia verificar a igualdade de cada segmento e ponto.
         # Por simplicidade, comparamos nome, número de segmentos e cor.
@@ -204,4 +204,4 @@ class Objeto3D:
             and len(self.segments) == len(other.segments)
             and self.color == other.color
             and self.segments == other.segments
-        )  # Compara se os segmentos são os mesmos (Ponto3D tem __eq__)
+        )  # Compara se os segmentos são os mesmos (Point3D tem __eq__)
